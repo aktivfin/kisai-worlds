@@ -1,0 +1,16 @@
+{
+  "menu":{"file":"audio/menu_unknown_world.mp3","title":"The Unknown World","intensity":0.15},
+  "lobby":{"file":"audio/lobby_candlelight.mp3","title":"Candlelight over the Map","intensity":0.12},
+  "explore":{"file":"audio/explore_harbor.mp3","title":"Rain at the Harbor","intensity":0.20},
+  "tavern":{"file":"audio/tavern_wet_timber.mp3","title":"Wet Timber Pulse","intensity":0.22},
+  "investigation":{"file":"audio/investigation_unresolved.mp3","title":"Unresolved Minor","intensity":0.28},
+  "discovery":{"file":"audio/discovery_threshold.mp3","title":"The Threshold of Dorian","intensity":0.36},
+  "tension":{"file":"audio/tension_phrygian.mp3","title":"Phrygian Ostinato","intensity":0.55},
+  "chase":{"file":"audio/chase_wet_street.mp3","title":"Wet Street Pursuit","intensity":0.74},
+  "ritual":{"file":"audio/ritual_hidden.mp3","title":"Hidden Ceremony","intensity":0.58},
+  "abyss":{"file":"audio/abyss_vast_below.mp3","title":"The Vast Below","intensity":0.62},
+  "dread":{"file":"audio/dread_unbottomed.mp3","title":"The Unbottomed Well","intensity":0.68},
+  "hell":{"file":"audio/hell_furnace.mp3","title":"The Furnace's Breath","intensity":0.84},
+  "boss":{"file":"audio/boss_approaches.mp3","title":"The Boss Approaches","intensity":0.94},
+  "grief":{"file":"audio/grief_pressure.mp3","title":"Grief Under Pressure","intensity":0.72}
+}
