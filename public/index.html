@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#090a0c">
+  <title>KisAI Worlds</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <div class="ambient-noise"></div>
+  <header class="topbar">
+    <button id="brandBtn" class="brand ghostish" aria-label="На главную">
+      <span class="sigil">K</span>
+      <span class="brandText"><b>KisAI Worlds</b><small>AI PARTY RPG // DEMO 0.4</small></span>
+    </button>
+    <nav class="mainNav" aria-label="Основные разделы">
+      <button class="navBtn active" data-nav="home">Игра</button>
+      <button class="navBtn" data-econ="hero">Герой</button>
+      <button class="navBtn" data-econ="inventory">Инвентарь</button>
+      <button class="navBtn" data-econ="market">Рынок</button>
+      <button class="navBtn" data-econ="wallet">Кошелёк</button>
+    </nav>
+    <div class="topActions">
+      <button id="walletPill" class="walletPill"><span class="coinMark">K</span><b id="walletBalance">—</b><small>KAI</small></button>
+      <div id="connectionPill" class="connectionPill"><i></i><span>LOCAL</span></div>
+      <div id="musicNow" class="musicNow" title="Adaptive soundtrack"><span>♫</span><div><small>ADAPTIVE SCORE</small><b id="musicTitle">ожидание</b></div></div><button id="settingsBtn" class="iconBtn">⚙ <span>AI</span></button>
+    </div>
+  </header>
+  <main>
+    <section id="home" class="screen active homeScreen">
+      <div class="homeBackdrop"></div><div class="homeShade"></div>
+      <div class="homeContent">
+        <p class="eyebrow">VOICE-FIRST MULTIPLAYER ROLEPLAYING</p>
+        <h1>KisAI<br><span>Worlds</span></h1>
+        <p class="lead">Живые голоса друзей. AI-гейммастер. Персональное восприятие сцены. Герои, которые растут вместе с путешествиями.</p>
+        <div class="menuStack">
+          <button id="hostBtn" class="menuBtn primaryMenu"><span>✦</span><b>Новая игра</b><small>Создать комнату и выбрать историю</small></button>
+          <button id="joinBtn" class="menuBtn"><span>◉</span><b>Присоединиться</b><small>Войти по коду комнаты</small></button>
+          <button id="economyBtn" class="menuBtn"><span>◈</span><b>Арсенал и рынок</b><small>Экипировка, редкости, торговля и KAI</small></button>
+          <button id="demoTourBtn" class="menuBtn"><span>◇</span><b>Как это работает</b><small>Короткий обзор игрового цикла</small></button>
+        </div>
+      </div>
+      <div class="homeInfo glass">
+        <div><span class="dot live"></span> AI GM</div><div><span class="dot live"></span> VOICE TURN</div><div><span class="dot"></span> CINEMATIC FRAME</div>
+      </div>
+    </section>
+    <section id="setup" class="screen setupScreen">
+      <div class="sectionHead"><button class="back iconBtn">←</button><div><p class="eyebrow">НОВАЯ ИГРА</p><h2>Выбери историю</h2></div><div class="stepPill">01 / 03</div></div>
+      <div id="scenarioGrid" class="scenarioGrid"></div>
+      <div class="setupBottom glass"><label><span>Имя игрока</span><input id="playerName" placeholder="Например, Артём" maxlength="24"></label><button id="createRoom" class="goldBtn">Создать лобби <span>→</span></button></div>
+    </section>
+    <section id="join" class="screen joinScreen">
+      <div class="joinBackdrop"></div>
+      <div class="joinCard glass"><button class="back iconBtn floatingBack">←</button><p class="eyebrow">ПОДКЛЮЧЕНИЕ К ПАРТИИ</p><h2>Войти в лобби</h2><p class="muted">Попроси хоста прислать шестизначный код комнаты.</p><label>Твоё имя<input id="joinName" placeholder="Имя игрока" maxlength="24"></label><label>Код комнаты<input id="roomCode" class="roomCodeInput" placeholder="A1B2C3" maxlength="6"></label><button id="joinRoom" class="goldBtn wide">Войти в игру</button></div>
+    </section>
+    <section id="lobby" class="screen lobbyScreen">
+      <div class="lobbyBackdrop"></div><div class="lobbyShade"></div>
+      <div class="lobbyHeader">
+        <div><p class="eyebrow">ЛОББИ ПАРТИИ · <span id="lobbyCode"></span></p><h2 id="lobbyScenario"></h2></div>
+        <div class="lobbyActions"><button id="copyLink" class="softBtn">⧉ Копировать приглашение</button><button id="startGame" class="goldBtn">Начать приключение</button></div>
+      </div>
+      <div class="lobbyLayout">
+        <div class="partyColumn">
+          <div class="glass panelHead"><span>Игроки</span><small id="playerCount">1 / 5</small></div>
+          <div id="players" class="playerCards"></div>
+          <div class="voiceCheck glass"><div class="micPulse">🎙</div><div><b>Голосовая партия</b><p>Живой голос игрока слышат остальные; AI параллельно превращает речь в действие.</p></div><span class="statusOk">ГОТОВО</span></div>
+        </div>
+        <div class="characterPanel glass">
+          <div class="charPanelVisual"><div class="charVisualShade"></div><div class="charVisualText"><p class="eyebrow">ТВОЙ ГЕРОЙ</p><h3>Опиши кого хочешь играть</h3><p>Нейронка сохранит фантазию персонажа, но адаптирует реальную силу под текущий уровень.</p></div></div>
+          <div class="charBuilder">
+            <div class="builderStep active"><b>01</b><span>Концепция</span></div><div class="builderLine"></div><div class="builderStep"><b>02</b><span>Баланс</span></div><div class="builderLine"></div><div class="builderStep"><b>03</b><span>Готово</span></div>
+            <label>Способности и стиль игры<textarea id="charWish" placeholder="Например: маг пространства. Хочу резать дистанцию, телепортироваться и создавать короткие разломы..."></textarea></label>
+            <label>Внешность<textarea id="charAppearance" placeholder="Возраст, лицо, волосы, одежда, оружие, заметные детали..."></textarea></label>
+            <div class="charButtons"><button id="genChar" class="softBtn">✦ Сгенерировать и сбалансировать</button><button id="saveChar" class="goldBtn" disabled>Выбрать героя</button></div>
+            <div id="charCard"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section id="game" class="screen gameScreen">
+      <div class="gameTop"><div><p class="eyebrow" id="gameScenarioLabel">KISAI WORLD</p><h2 id="sceneTitle">Текущая сцена</h2></div><div class="turnChip" id="turnLabel">ОЖИДАНИЕ...</div></div>
+      <div class="gameLayout">
+        <aside class="partyRail glass"><h3>Партия</h3><div id="party"></div><div class="separator"></div><div id="myStats"></div></aside>
+        <div class="sceneStage">
+          <div id="sceneArt" class="sceneArt"><div class="sceneParallax"></div><div class="vignette"></div><div class="sceneGrain"></div><div class="sceneBadge">CANONICAL SCENE</div></div>
+          <div class="narration glass"><div class="gmAvatar">GM</div><div><p class="eyebrow">GAME MASTER</p><p id="gmText"></p></div></div>
+          <div class="voiceDock glass">
+            <button id="ptt" class="micButton"><span class="micIcon">🎙</span><span class="micLabel"><b>Удерживай для хода</b><small>Говори естественно — друзья слышат тебя</small></span><span class="wave"><i></i><i></i><i></i><i></i><i></i></span></button>
+            <div class="textAction"><input id="textTurn" placeholder="Или введи действие текстом..."><button id="sendText">➤</button></div>
+            <div id="voiceStatus" class="voiceStatus"><span></span>Ожидание хода</div>
+          </div>
+        </div>
+        <aside class="sceneRail glass"><h3>Сцена</h3><div class="sceneThumb active"><img src="assets/game_harbor.jpg" alt=""><span>Текущий кадр</span></div><div class="sceneThumb mutedThumb"><img src="assets/gm_tavern.jpg" alt=""><span>Последний момент</span></div><div class="separator"></div><div id="sceneLoot" class="sceneLoot"></div><p class="railLabel">Журнал</p><div id="log" class="log"></div></aside>
+      </div>
+    </section>
+    <section id="economy" class="screen economyScreen">
+      <div class="economyBackdrop"></div><div class="economyShade"></div>
+      <div class="economyShell">
+        <div class="economyHead">
+          <div><p class="eyebrow">KISAI ECONOMY · DEV LEDGER</p><h2>Арсенал и внутренний рынок</h2><p class="muted">Предметы добываются в приключениях, остаются у профиля и могут свободно перепродаваться за KAI.</p></div>
+          <div class="walletHero"><small>БАЛАНС</small><strong><span id="econBalance">0</span> KAI</strong><span id="walletAddress">kai1…</span></div>
+        </div>
+        <div class="economyLayout">
+          <aside class="econSidebar glass">
+            <button class="econTab active" data-tab="hero"><span>♙</span><div><b>Герой</b><small>Экипировка и сила</small></div></button>
+            <button class="econTab" data-tab="inventory"><span>▦</span><div><b>Инвентарь</b><small>Все найденные предметы</small></div></button>
+            <button class="econTab" data-tab="market"><span>◇</span><div><b>Рынок</b><small>Покупка и перепродажа</small></div></button>
+            <button class="econTab" data-tab="wallet"><span>◉</span><div><b>Кошелёк</b><small>Фарм и транзакции</small></div></button>
+            <div class="ledgerBadge"><i></i><div><b>KisAI Dev Ledger</b><small>Demo · off-chain · без вывода</small></div></div>
+          </aside>
+          <div class="econContent glass">
+            <div id="econHero" class="econPane active">
+              <div class="paneHead"><div><p class="eyebrow">LOADOUT</p><h3>Экипировка героя</h3></div><span class="powerBadge" id="gearPower">GEAR +0</span></div>
+              <div id="heroLoadout" class="loadoutGrid"></div>
+              <div class="economyInfoCard"><b>Как работает сила шмота</b><p>Редкость увеличивает бюджет аффиксов, но предметы масштабируются вокруг уровня героя. Важно: при смерти весь переносимый инвентарь выпадает в текущей сцене. Союзники должны подобрать вещи до ухода, иначе они исчезнут навсегда.</p></div>
+            </div>
+            <div id="econInventory" class="econPane">
+              <div class="paneHead"><div><p class="eyebrow">COLLECTION</p><h3>Инвентарь</h3></div><div class="inventoryFilters"><button class="filterChip active" data-rarity="all">Все</button><button class="filterChip" data-rarity="rare">Rare+</button><button class="filterChip" data-rarity="equipped">Надето</button></div></div>
+              <div id="inventoryGrid" class="inventoryGrid"></div>
+            </div>
+            <div id="econMarket" class="econPane">
+              <div class="paneHead"><div><p class="eyebrow">SECONDARY MARKET</p><h3>Рынок игроков</h3></div><div class="marketTools"><input id="marketSearch" placeholder="Поиск предмета..."><button id="refreshMarket" class="softBtn">↻ Обновить</button></div></div>
+              <div class="marketTicker"><span>Комиссия сделки <b>2.5%</b></span><span>Все предметы <b>tradable</b></span><span>Цена задаётся владельцем</span></div>
+              <div id="marketGrid" class="marketGrid"></div>
+            </div>
+            <div id="econWallet" class="econPane">
+              <div class="paneHead"><div><p class="eyebrow">WALLET</p><h3>KAI кошелёк</h3></div><div class="farmMeter"><span>ДНЕВНОЙ ФАРМ</span><div><i id="farmFill"></i></div><b id="farmText">0 / 60</b></div></div>
+              <div class="walletStats"><div><small>Доступно</small><strong id="walletBigBalance">0 KAI</strong></div><div><small>Сеть</small><strong>KisAI Dev Ledger</strong></div><div><small>Источник</small><strong>Приключения + торговля</strong></div></div>
+              <p class="walletNote">В этой демо-сборке KAI — внутренняя тестовая крипто-экономика без денежной стоимости и вывода: токены фармятся в приключениях с дневным лимитом, тратятся на вторичном рынке и переходят продавцу за вычетом комиссии. Ledger отделён от игрового runtime, чтобы позже заменить его на выбранную блокчейн-сеть и внешний кошелёк.</p>
+              <div class="transactions"><div class="transactionsHead"><b>Последние операции</b><small>локальный профиль</small></div><div id="txList"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="itemInspector" class="itemInspector hidden"><div class="inspectorPanel"><button id="closeInspector" class="x iconBtn">×</button><div id="inspectorBody"></div></div></div>
+    </section>
+    <section id="settings" class="modal hidden"><div class="panel settings"><button id="closeSettings" class="x iconBtn">×</button><p class="eyebrow">RUNTIME</p><h2>AI Providers</h2><p class="muted">Ключи сохраняются только в локальном <code>data/config.json</code> хоста.</p><div class="settingsGrid"><label>LLM Base URL<input id="llmUrl"></label><label>LLM model<input id="llmModel"></label><label>LLM API key<input id="llmKey" type="password"></label><label>STT model<input id="sttModel"></label><label>STT API key<input id="sttKey" type="password"></label><label>TTS provider<select id="ttsProvider"><option value="openai">OpenAI</option><option value="elevenlabs">ElevenLabs</option></select></label><label>TTS model<input id="ttsModel"></label><label>TTS voice / voice_id<input id="ttsVoice"></label><label>TTS API key<input id="ttsKey" type="password"></label><label>Громкость музыки<input id="musicVolume" type="range" min="0" max="100" value="32"></label><label class="check"><input id="imgEnabled" type="checkbox"> Генерировать ключевые кадры</label><label>Image model<input id="imgModel"></label><label>Image API key<input id="imgKey" type="password"></label></div><button id="saveSettings" class="goldBtn wide">Сохранить настройки</button></div></section>
+    <section id="tour" class="modal hidden"><div class="panel tourPanel"><button id="closeTour" class="x iconBtn">×</button><p class="eyebrow">ИГРОВОЙ ЦИКЛ</p><h2>Говоришь ты — мир отвечает</h2><div class="tourFlow"><div><b>1</b><span>Игрок говорит</span><small>Реальный голос идёт партии</small></div><i>→</i><div><b>2</b><span>STT понимает ход</span><small>Речь становится действием</small></div><i>→</i><div><b>3</b><span>AI GM решает</span><small>С учётом мира и уровня</small></div><i>→</i><div><b>4</b><span>Мир меняется</span><small>Голос GM + новый кадр</small></div></div></div></section>
+  </main>
+  <div id="transition" class="transition"><span class="sigil big">K</span><p>Загружаем мир…</p></div>
+  <div id="toast" class="toast"></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
