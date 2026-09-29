@@ -1,0 +1,12 @@
+{
+  "name": "kisai-worlds-windows-demo",
+  "version": "0.5.0",
+  "private": true,
+  "description": "Voice-first multiplayer AI RPG prototype with character-adaptive unique loot, persistent provenance, rarity tiers, KAI ledger and secondary market",
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check public/app.js",
+    "validate:assets": "node scripts/validate-assets.mjs",
+    "verify": "npm run check && npm run validate:assets"
+  }
+}
