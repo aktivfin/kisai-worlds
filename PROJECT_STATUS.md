@@ -1,24 +1,30 @@
 # Project status
 
-Current baseline: **KisAI Worlds Windows Demo 0.5**.
+Current baseline: **KisAI Worlds Windows/Linux Demo 0.6.1**.
 
 ## Implemented
-- Windows/LAN browser vertical slice.
 - Multiplayer lobby and turn flow.
 - AI-assisted character creation with level-budget adaptation.
 - Real-player microphone capture plus STT -> GM -> TTS loop.
-- Optional image generation.
 - Adaptive soundtrack with 14 scene states, crossfades and speech ducking.
-- Inventory/equipment tabs, rarity tiers, KAI test ledger and secondary market.
-- Character death drops carried inventory and market escrow into the scene.
-- Loot not recovered before scene transition is permanently lost.
-- Unique character-adaptive item generation with immutable identity/provenance after creation.
+- Inventory/equipment, rarity tiers, KAI test ledger and secondary market.
+- Death drops inventory + market escrow into the scene; abandoned loot is lost.
+- Unique character-adaptive item generation with immutable provenance.
+- Cinematic menu transitions and integrated cover art.
+- Windows and Linux installers/launchers with local-only config creation.
 
-## Important prototype boundaries
-- KAI is off-chain test currency only; no real-money value or withdrawals are implemented.
-- This is not yet a final Steam executable.
-- Network/voice transport is prototype-grade LAN behavior, not production internet multiplayer.
-- Generated images are optional and do not yet implement canonical master-frame -> per-player POV consistency.
+## Visual assignment
+- menu_world.jpg -> main menu hero.
+- lobby_tavern.jpg -> join/lobby.
+- character_creator.jpg -> character creator and arsenal mood.
+- game_harbor.jpg -> canonical gameplay frame.
+- gm_tavern.jpg -> secondary GM/cinematic frame.
+- concept_sheet.png -> production reference only.
+
+## Prototype boundaries
+- KAI remains off-chain test currency only.
+- Browser/LAN vertical slice, not yet a final Steam executable.
+- Generated images do not yet enforce full master-frame -> per-player POV geometry.
 
 ## Next milestone
-0.6 focuses on canonical scene state, player POV rendering, item visual generation for high rarity drops and stronger persistence boundaries.
+0.7: canonical scene geometry, personal POV rendering, generated visual cards for Epic+ items, stronger persistence and internet-grade voice transport.
