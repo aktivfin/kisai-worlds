@@ -201,6 +201,49 @@ function materialItem(catalogId,quantity=1,status='scene'){
   const d=crafting.materials[catalogId];if(!d)return null;return{id:id('stack'),catalogId,kind:d.kind,name:d.name,quantity,stackable:true,slotCost:d.slot_cost||1,status};
 }
 
+
+function rotationSeed(){return parseInt(crypto.createHash('sha1').update(new Date().toISOString().slice(0,10)).digest('hex').slice(0,8),16)}
+function currentEvents(){
+  if(!scenarios.length)return[];
+  const seed=rotationSeed(),count=clamp(3+(seed%4),3,Math.min(9,scenarios.length)),start=seed%scenarios.length,out=[];
+  for(let i=0;i<count;i++)out.push(scenarios[(start+i)%scenarios.length]);
+  if(!out.some(x=>x.entry?.type==='free')){const free=scenarios.find(x=>x.entry?.type==='free');if(free)out[out.length-1]=free}
+  const expires=new Date();expires.setUTCHours(24,0,0,0);
+  return [...new Map(out.map(x=>[x.id,x])).values()].map(x=>({...x,rotation_expires_at:expires.toISOString()}));
+}
+function activeEvent(eventId){return currentEvents().find(x=>x.id===eventId)||null}
+function subscriptionActive(p){return Boolean(p.subscription?.active&&(!p.subscription.expiresAt||new Date(p.subscription.expiresAt)>new Date()))}
+function accessStatus(p,event){
+  if(event.entry?.type==='free')return{ok:true,source:'free'};
+  if(subscriptionActive(p))return{ok:true,source:'subscription'};
+  if((p.eventTickets||0)>0)return{ok:true,source:'ticket'};
+  return{ok:false,source:'payment_required'};
+}
+function consumeAccess(p,event){
+  const a=accessStatus(p,event);if(!a.ok)throw new Error('payment_required');
+  if(a.source==='ticket'){p.eventTickets--;persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'event_ticket',amount:0,eventId:event.id})}
+  return a;
+}
+function craftForProfile(p,recipeId,quantity=1){
+  const recipe=crafting.recipes.find(x=>x.id===recipeId);if(!recipe)throw new Error('recipe_not_found');quantity=clamp(Math.floor(Number(quantity)||1),1,20);
+  for(const [catalogId,cost] of Object.entries(recipe.cost)){
+    const have=p.inventory.filter(x=>x.catalogId===catalogId).reduce((n,x)=>n+(x.quantity||1),0);
+    if(have<cost*quantity)throw new Error('missing_material_'+catalogId);
+  }
+  for(const [catalogId,cost] of Object.entries(recipe.cost)){
+    let need=cost*quantity;
+    for(const item of [...p.inventory]){if(item.catalogId!==catalogId||need<=0)continue;const take=Math.min(need,item.quantity||1);consumeInventoryItem(p.inventory,item.id,take);need-=take}
+  }
+  const out={id:id('stack'),catalogId:recipe.id,kind:'consumable',name:recipe.output.name,quantity,stackable:true,slotCost:recipe.output.slot_cost||1,effect:recipe.output.effect,status:'owned'};
+  addToStash(p,out);persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'craft',amount:0,recipeId,quantity});saveState();return out;
+}
+function storeView(){
+  return{currency:'USD',products:[
+    {id:'subscription_monthly',type:'subscription',title:'KisAI Worlds Monthly',price_cents:1499},
+    {id:'character_slot',type:'character_slot',title:'Дополнительный слот персонажа',price_cents:799}
+  ],note:'Prototype exposes entitlement gates; checkout provider is intentionally not implemented in this repository.'};
+}
+
 const rarities=['common','uncommon','rare','epic','relic','mythic'];
 const rarityBudget={common:2,uncommon:3,rare:5,epic:7,relic:10,mythic:14};
 function fingerprint(c={}) {
