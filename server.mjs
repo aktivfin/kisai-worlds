@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { resolveAttack, resolveCheck, conditionLabel } from './core/combat.mjs';
+import { materializeCharacterCore, createNpcCombatant, balanceAbilityFantasy } from './core/character.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(__dirname, 'data');
@@ -62,25 +64,25 @@ async function openAIChat(messages, temperature=.7){
 }
 async function generateCharacterAI(wish,appearance){
   if(!providerReady('llm')) return null;
-  const prompt='Return ONLY compact JSON for a level-1 RPG character. Preserve fantasy, but keep numeric power server-safe. Schema: {"archetype":string,"concept":string,"skills":{"Сила":1-4,"Ловкость":1-4,"Интеллект":1-4,"Воля":1-4,"Восприятие":1-4},"abilities":[string,string],"weakness":string}. Total skill points must be <=13.';
+  const prompt='Return ONLY compact JSON for a level-1 classless RPG character. Preserve fantasy; never set combat numbers. Schema: {"archetype":string,"concept":string,"attributes":{"strength":-3..4,"agility":-3..4,"endurance":-3..4,"perception":-3..4,"intelligence":-3..4,"charisma":-3..4},"dynamicSkills":[{"name":string,"rank":0..3,"attribute":"strength|agility|endurance|perception|intelligence|charisma"}],"abilities":[string,string],"weakness":string}. Ability names are fantasy only; server balances their mechanics.';
   const text=await openAIChat([{role:'system',content:prompt},{role:'user',content:'Concept: '+wish+'\\nAppearance: '+appearance}],.5);
   const x=safeJsonText(text); if(!x||typeof x!=='object') return null;
-  const base=fallbackCharacter(wish,appearance), skills={};
-  for(const k of Object.keys(base.skills)) skills[k]=clamp(Number(x.skills?.[k])||base.skills[k],1,4);
-  let total=Object.values(skills).reduce((a,b)=>a+b,0);
-  while(total>13){const k=Object.keys(skills).sort((a,b)=>skills[b]-skills[a])[0];if(skills[k]<=1)break;skills[k]--;total--;}
-  return {...base,archetype:String(x.archetype||base.archetype).slice(0,48),concept:String(x.concept||wish||base.concept).slice(0,400),skills,abilities:Array.isArray(x.abilities)?x.abilities.slice(0,2).map(v=>String(v).slice(0,180)):base.abilities,weakness:String(x.weakness||base.weakness).slice(0,180)};
+  const base=fallbackCharacter(wish,appearance),attributes={...base.attributes};
+  for(const k of Object.keys(attributes))attributes[k]=clamp(Number(x.attributes?.[k]??attributes[k]),-3,4);
+  let total=Object.values(attributes).reduce((a,b)=>a+b,0);while(total>9){const k=Object.keys(attributes).sort((a,b)=>attributes[b]-attributes[a])[0];if(attributes[k]<=0)break;attributes[k]--;total--}
+  const dynamicSkills=Array.isArray(x.dynamicSkills)?x.dynamicSkills.slice(0,5).map(v=>({name:String(v.name||'Навык').slice(0,40),rank:clamp(Number(v.rank)||1,0,3),attribute:['strength','agility','endurance','perception','intelligence','charisma'].includes(v.attribute)?v.attribute:'perception'})):base.dynamicSkills;
+  return materializeCharacterCore({...base,archetype:String(x.archetype||base.archetype).slice(0,48),concept:String(x.concept||wish||base.concept).slice(0,400),attributes,dynamicSkills,abilities:Array.isArray(x.abilities)?x.abilities.slice(0,3).map(v=>String(v).slice(0,180)):base.abilities,weakness:String(x.weakness||base.weakness).slice(0,180)});
 }
 async function resolveGMAI(room,action,actor){
   const player=room.players.get(actor.id),fallback=fallbackGM(room,action,actor);
   if(!providerReady('llm'))return fallback;
   const recent=room.log.slice(0,8).reverse().map(x=>x.actor+': '+x.action+' -> '+x.narration).join('\n');
-  const system='You are a GM planner. Event difficulty and dice are server-controlled. Return ONLY JSON: {"check_required":boolean,"check_skill":"Сила|Ловкость|Интеллект|Воля|Восприятие","difficulty_shift":-1|0|1,"danger":"safe|risky|lethal","success_narration":string,"failure_narration":string,"no_check_narration":string,"music_state":"explore|tavern|investigation|discovery|tension|chase|ritual|abyss|dread|hell|boss|grief","move_to":string|null,"loot":boolean}. move_to may only be an existing anchor id. Do not adapt difficulty to party size.';
+  const system='You are Intent Interpreter, not Rules Engine. Return ONLY JSON: {"check_required":boolean,"check_attribute":"strength|agility|endurance|perception|intelligence|charisma","check_skill":string|null,"difficulty_shift":-1|0|1,"danger":"safe|risky|lethal","success_narration":string,"failure_narration":string,"no_check_narration":string,"music_state":"explore|tavern|investigation|discovery|tension|chase|ritual|abyss|dread|hell|boss|grief","move_to":string|null,"loot":boolean}. Never invent dice, DC, damage, armor, HP or final mechanical outcome. move_to may only be an existing anchor id. Do not adapt difficulty to party size.';
   const user='FIXED EVENT TIER '+(room.scenario?.danger_tier||1)+'; recommended party '+(room.scenario?.recommended_players||1)+'; progress '+(room.progress||0)+'/100.\nEvent: '+room.scenario?.title+'\nGeometry: '+JSON.stringify(room.scene.geometry)+'\nPlayer: '+JSON.stringify({character:actor.character,wounds:player?.wounds||0,runInventory:(player?.runInventory||[]).map(x=>x.name)})+'\nRecent:\n'+recent+'\nAction: '+action;
   try{
     const x=safeJsonText(await openAIChat([{role:'system',content:system},{role:'user',content:user}],.55));if(!x)return fallback;
-    const skills=['Сила','Ловкость','Интеллект','Воля','Восприятие'],music=['explore','tavern','investigation','discovery','tension','chase','ritual','abyss','dread','hell','boss','grief'];
-    return{check_required:Boolean(x.check_required),check_skill:skills.includes(x.check_skill)?x.check_skill:fallback.check_skill,difficulty_shift:clamp(Number(x.difficulty_shift)||0,-1,1),
+    const attributes=['strength','agility','endurance','perception','intelligence','charisma'],music=['explore','tavern','investigation','discovery','tension','chase','ritual','abyss','dread','hell','boss','grief'];
+    return{check_required:Boolean(x.check_required),check_attribute:attributes.includes(x.check_attribute)?x.check_attribute:fallback.check_attribute,check_skill:typeof x.check_skill==='string'?x.check_skill.slice(0,40):fallback.check_skill,difficulty_shift:clamp(Number(x.difficulty_shift)||0,-1,1),
       danger:['safe','risky','lethal'].includes(x.danger)?x.danger:'safe',success_narration:String(x.success_narration||fallback.success_narration).slice(0,650),
       failure_narration:String(x.failure_narration||fallback.failure_narration).slice(0,650),no_check_narration:String(x.no_check_narration||fallback.no_check_narration).slice(0,650),
       music_state:music.includes(x.music_state)?x.music_state:fallback.music_state,move_to:typeof x.move_to==='string'?x.move_to:null,loot:Boolean(x.loot)};
@@ -119,6 +121,50 @@ function dropCharacterInventory(r,p){
   const c=p.characters.find(x=>x.id===player.characterId);if(c){c.status='dead';c.deathAt=now();c.deathEventId=r.scenario.id}
   syncActiveCharacter(p);saveState();return dropped;
 }
+function isAttackAction(action=''){
+  return /атак|бью|удар|реж|разрез|руб|колю|стрел|выстрел|кастаю.*(огн|молни|луч)|пинаю|кулаком/i.test(action);
+}
+function attackArea(action=''){
+  const t=normalize(action);if(/глаз/.test(t))return'eye';if(/ше[юи]|горло/.test(t))return'neck';if(/голов|лиц/.test(t))return'head';if(/рук|кист/.test(t))return'arm';if(/ног|колен/.test(t))return'leg';if(/повреж|трещ|дыр|пробит|разрез.*брон/.test(t))return'breach';return'torso';
+}
+function selectAttackAbility(character,action=''){
+  materializeCharacterCore(character);const t=normalize(action),abilities=character.abilities||[];
+  const named=abilities.find(a=>t.includes(normalize(a.name||a.fantasy||'')));if(named)return named;
+  if(/разрез/.test(t))return abilities.find(a=>/разрез/i.test(a.name||''))||balanceAbilityFantasy('Разрез пространства',character.level);
+  if(/стрел|выстрел/.test(t))return abilities.find(a=>/стрел/i.test(a.name||''))||balanceAbilityFantasy('Точный выстрел',character.level);
+  if(/кулак|пинаю|удар/.test(t))return balanceAbilityFantasy('Удар',character.level);
+  return abilities[0]||balanceAbilityFantasy('Основной приём',character.level);
+}
+function equippedRunWeapon(profile,player){
+  const equippedId=profile.equipped?.weapon;
+  return (player.runInventory||[]).find(x=>x.id===equippedId)||(player.runInventory||[]).find(x=>x.kind==='equipment'&&x.slot==='weapon')||null;
+}
+function combatNarrativeFallback(actor,target,result){
+  if(!result.hit)return (actor.character?.name||actor.name)+' атакует, но '+target.name+' уходит от удара.';
+  const armor=result.armor?.before||0,hp=result.damage?.hp||0;
+  if(result.killed)return 'Атака достигает цели: '+target.name+' получает '+hp+' урона после брони '+armor+' и больше не способен продолжать бой.';
+  if(hp===0)return 'Удар попадает в '+target.name+', но броня ('+armor+') полностью принимает '+(result.damage?.raw||0)+' урона. Защита получает износ.';
+  return 'Попадание. '+target.name+' получает '+hp+' HP-урона после брони '+armor+'.'+(result.injury?' Возникает травма области «'+result.targetArea+'».':'');
+}
+async function narrateCombatOutcome(room,actor,action,target,result){
+  const fallback=combatNarrativeFallback(actor,target,result);if(!providerReady('llm'))return fallback;
+  const system='You are Narrative Engine. Mechanics are already final. Describe only the supplied facts in vivid Russian in 1-3 sentences. Never change hit/miss, HP damage, armor, injury, death, item state or numbers. A declared goal such as decapitation is not guaranteed unless mechanics say killed and the result plausibly supports it.';
+  const facts={action,attacker:actor.character?.name||actor.name,target:target.name,result};
+  try{const text=await openAIChat([{role:'system',content:system},{role:'user',content:JSON.stringify(facts)}],.45);return String(text||fallback).slice(0,700)}catch{return fallback}
+}
+async function commitCombatTurn(r,p,action,{targetId=null,abilityId=null,targetArea=null,aimed=null}={}){
+  const player=r.players.get(p.id);if(!player)throw new Error('player_not_in_room');const character=materializeCharacterCore(p.character||player.character);
+  const target=(r.scene.combatants||[]).find(x=>x.id===targetId&&x.status!=='dead')||(r.scene.combatants||[]).find(x=>x.status!=='dead');if(!target)throw new Error('no_hostile_target');
+  const ability=(character.abilities||[]).find(x=>x.id===abilityId)||selectAttackAbility(character,action),area=targetArea||attackArea(action),isAimed=aimed??area!=='torso';
+  const weapon=equippedRunWeapon(p,player),combat=resolveAttack({attacker:character,defender:target,ability,targetArea:area,aimed:isAimed,attackDie:nextD20(),damageRng:max=>crypto.randomInt(1,max+1),weapon});
+  const narration=await narrateCombatOutcome(r,p,action,target,combat);
+  const gain=combat.killed?24+(r.scenario.danger_tier||1)*4:combat.hit?8:2;r.progress=clamp((r.progress||0)+gain,0,100);
+  r.scene.narration=narration;r.scene.music_state=combat.killed?'discovery':'tension';r.scene.intensity=combat.killed?.45:.82;
+  r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,action,narration,combat});
+  const alive=[...r.players.values()].filter(x=>x.alive);if(alive.length)r.turnIndex=(r.turnIndex+1)%alive.length;
+  saveState();return{narration,music_state:r.scene.music_state,intensity:r.scene.intensity,combat,progress:r.progress};
+}
+
 function commitTurn(r,p,action,result){
   const player=r.players.get(p.id);if(!player)throw new Error('player_not_in_room');syncActiveCharacter(p);
   const roll=rollCheck(r.scenario,p.character,action,result,player);let woundsAdded=0,deathDrop=[];
@@ -159,9 +205,20 @@ function syncActiveCharacter(p){
   let active=p.characters.find(x=>x.id===p.activeCharacterId&&x.status==='alive')||p.characters.find(x=>x.status==='alive')||null;
   p.activeCharacterId=active?.id||null;p.character=active;p.alive=Boolean(active);return active;
 }
+function migrateItemState(item){
+  if(!item||item.kind!=='equipment')return item;
+  item.durability=Number.isFinite(Number(item.durability))?clamp(Number(item.durability),0,100):100;
+  item.condition=item.condition||conditionLabel(item.durability);
+  item.material=Array.isArray(item.material)?item.material:(item.slot==='armor'?['steel']:['steel']);
+  item.damage=Array.isArray(item.damage)?item.damage:[];
+  item.defects=Array.isArray(item.defects)?item.defects:[];
+  if(item.slot==='weapon'){item.baseDamage=item.baseDamage||'1d8';item.damageBonus=Number(item.damageBonus)||Math.max(0,Math.floor((item.power||1)/8))}
+  if(item.slot==='armor'){item.baseArmor=Number(item.baseArmor)||clamp(1+Math.floor((item.eventTier||1)/2),1,5);item.armor=item.baseArmor}
+  return item;
+}
 function migrateProfile(p){
   p.characterSlots=Number(p.characterSlots)||3;p.eventTickets=Number.isFinite(p.eventTickets)?p.eventTickets:2;p.subscription=p.subscription||{active:false,expiresAt:null};
-  p.inventory=Array.isArray(p.inventory)?p.inventory:[];p.characters=Array.isArray(p.characters)?p.characters:[];p.equipped=p.equipped||{weapon:null,armor:null,charm:null,tool:null};
+  p.inventory=(Array.isArray(p.inventory)?p.inventory:[]).map(migrateItemState);p.characters=(Array.isArray(p.characters)?p.characters:[]).map(materializeCharacterCore);p.equipped=p.equipped||{weapon:null,armor:null,charm:null,tool:null};
   if(p.character&&p.characters.length===0){
     const old={...p.character,id:p.character.id||id('char'),status:p.alive===false?'dead':'alive',xp:Number(p.character.xp)||0,level:Number(p.character.level)||1,createdAt:now(),runs:0,wins:0};
     p.characters.push(old);if(old.status==='alive')p.activeCharacterId=old.id;
@@ -283,8 +340,9 @@ function enchantRunItem(room,player,targetId,ingredientIds){
   const ids=[...new Set((ingredientIds||[]).map(String))];if(!ids.length||ids.length>facility.max_ingredients)throw new Error('invalid_ingredients');
   const picked=ids.map(x=>{const item=player.runInventory.find(i=>i.id===x),def=enchantDefinition(item);if(!def)throw new Error('invalid_enchant_ingredient');return{item,def}});
   for(const x of picked)consumeInventoryItem(player.runInventory,x.item.id,1);
-  const skill=Math.max(Number(player.character?.skills?.Интеллект)||2,Number(player.character?.skills?.Воля)||2);
-  const die=nextD20(),modifier=skill-2+Math.floor(((player.character?.level)||1)-1)/5,success=die===20||(die!==1&&die+modifier>=facility.challenge_dc);
+  materializeCharacterCore(player.character);
+  const modifier=(Number(player.character?.attributes?.intelligence)||0)+Math.floor(((player.character?.level)||1)-1)/5;
+  const die=nextD20(),success=die===20||(die!==1&&die+modifier>=facility.challenge_dc);
   const roll={die,skill:'Интеллект/Воля',modifier,dc:facility.challenge_dc,total:die+modifier,success,critical:die===20,criticalFail:die===1};
   target.enchantments=target.enchantments||[];target.provenance=target.provenance||[];
   if(success){
@@ -324,6 +382,8 @@ function createLoot(profile,state='explore',event=null,tags=[]){
     id:id('item'),serial:'KW-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomBytes(2).toString('hex').toUpperCase(),kind:'equipment',stackable:false,
     name:nouns[slot][crypto.randomInt(0,nouns[slot].length)]+' · '+style,slot,rarity,level,eventTier:event?.danger_tier||1,
     power:Math.max(1,Math.floor((level+(event?.danger_tier||1)*2+budget)*1.2)),affixes:[{stat:primary,value:Math.max(1,Math.ceil(budget/2))}],
+    durability:100,condition:'intact',material:slot==='armor'?['steel','leather']:slot==='weapon'?['steel']:['crystal','alloy'],damage:[],defects:[],
+    ...(slot==='weapon'?{baseDamage:'1d8',damageBonus:Math.max(0,Math.floor(budget/4))}:{}),...(slot==='armor'?{baseArmor:clamp(1+Math.floor(((event?.danger_tier)||1)/2)+Math.floor(budget/6),1,6),armor:clamp(1+Math.floor(((event?.danger_tier)||1)/2)+Math.floor(budget/6),1,6)}:{}),
     passive:'Синергия: '+style+' / '+primary,lore:'Уникальный предмет, сформированный поведением '+(c.name||profile.name)+(event?' в событии «'+event.title+'»':'')+'.',
     adaptiveFor:{characterId:c.id,name:c.name||profile.name,archetype:c.archetype,level,dominantSkills:skills,behaviorTags:tags},
     enchantments:[],visualPrompt:'Square premium dark-fantasy RPG inventory card, '+slot+', '+rarity+', '+style+', no text, no UI, no watermark',visual:null,
@@ -338,12 +398,9 @@ function randomMaterial(event){
 
 function fallbackCharacter(wish='',appearance='') {
   const t=normalize(wish);
-  const archetype=/маг|разрез|простран|аркан/.test(t)?'Арканист':/щит|брон|танк|сила/.test(t)?'Страж':/лук|след|ловк|скрыт/.test(t)?'Следопыт':'Авантюрист';
-  const skills={Сила:2,Ловкость:2,Интеллект:2,Воля:2,Восприятие:2};
-  if(archetype==='Арканист'){skills.Интеллект=4;skills.Воля=3}
-  if(archetype==='Страж'){skills.Сила=4;skills.Воля=3}
-  if(archetype==='Следопыт'){skills.Ловкость=4;skills.Восприятие=3}
-  return {id:id('char'),name:'Герой',archetype,level:1,xp:0,status:'alive',runs:0,wins:0,createdAt:now(),concept:wish||'Искатель приключений',appearance,skills,abilities:['Основной приём','Ситуативная способность'],weakness:'Ограниченный ресурс сильных приёмов'};
+  const archetype=/маг|разрез|простран|аркан/.test(t)?'Арканист':/щит|брон|танк|сила/.test(t)?'Страж':/лук|след|ловк|скрыт|стрел/.test(t)?'Следопыт':'Авантюрист';
+  const fantasy=/разрез|простран/.test(t)?'Разрез пространства':/стрел|лук/.test(t)?'Точный выстрел':/щит|страж/.test(t)?'Силовой удар':'Основной приём';
+  return materializeCharacterCore({id:id('char'),name:'Герой',archetype,level:1,xp:0,status:'alive',runs:0,wins:0,createdAt:now(),concept:wish||'Искатель приключений',appearance,abilities:[fantasy],weakness:'Сила авторских приёмов ограничена уровневым бюджетом'});
 }
 function classifyMusic(text='') {
   const t=normalize(text);
@@ -353,23 +410,33 @@ function classifyMusic(text='') {
   if(/бой|атак|удар|враг/.test(t))return'tension'; if(/наш|откр|понял|тайн/.test(t))return'discovery';
   return'explore';
 }
-function chooseSkill(action){
-  const t=normalize(action);if(/поднять|слом|толк|удар|сил/.test(t))return'Сила';if(/прыг|уклон|крад|тихо|ловк|стрел/.test(t))return'Ловкость';
-  if(/анализ|взлом|маг|знан|механ/.test(t))return'Интеллект';if(/страх|вол|концент|ритуал/.test(t))return'Воля';return'Восприятие';
+function chooseCheck(action){
+  const t=normalize(action);
+  if(/слом|поднять|толк|тащ|удерж/.test(t))return{attribute:'strength',skill:null};
+  if(/угрож|запуг/.test(t))return{attribute:/ломаю|разбиваю|сжимаю/.test(t)?'strength':'charisma',skill:'Запугивание'};
+  if(/убеж|обман|переговор|лидер/.test(t))return{attribute:'charisma',skill:/обман/.test(t)?'Обман':'Убеждение'};
+  if(/крад|тихо|скрыт/.test(t))return{attribute:'agility',skill:'Скрытность'};
+  if(/стрел|винтов|лук|пистолет/.test(t))return{attribute:'agility',skill:'Баллистика'};
+  if(/прыг|уклон|акроб|баланс/.test(t))return{attribute:'agility',skill:null};
+  if(/яд|боль|истощ|выдерж|терп/.test(t))return{attribute:'endurance',skill:null};
+  if(/анализ|взлом|механ|техник|медицин/.test(t))return{attribute:'intelligence',skill:/медицин/.test(t)?'Медицина':null};
+  if(/осмотр|ищ|след|слуш|замеч|воспр/.test(t))return{attribute:'perception',skill:null};
+  return{attribute:'perception',skill:null};
 }
 function fallbackGM(room,action,actor){
-  const t=normalize(action),risky=/атак|прыг|взлом|крад|бег|ритуал|слом|лез|переб|плыв/.test(t),lethal=/пропаст|огн|босс|бездн|смертел|прыгаю вниз|прыжок вниз/.test(t);
+  const t=normalize(action),risky=/атак|удар|реж|стрел|прыг|взлом|крад|бег|ритуал|слом|лез|переб|плыв/.test(t),lethal=/пропаст|огн|босс|бездн|смертел|прыгаю вниз|прыжок вниз/.test(t),check=chooseCheck(action);
   const anchor=room.scene.geometry?.anchors?.find(x=>t.includes(normalize(x.label))||t.includes(normalize(x.id)));
-  return{check_required:risky,check_skill:chooseSkill(action),difficulty_shift:0,danger:lethal?'lethal':risky?'risky':'safe',
+  return{check_required:risky,check_attribute:check.attribute,check_skill:check.skill,difficulty_shift:0,danger:lethal?'lethal':risky?'risky':'safe',
     success_narration:(actor.character?.name||actor.name)+' добивается результата.',failure_narration:'Попытка проваливается и создаёт осложнение.',
     no_check_narration:(actor.character?.name||actor.name)+' действует: '+action+'.',music_state:risky?'tension':'explore',move_to:anchor?.id||null,loot:risky};
 }
 function fixedDc(event,shift=0){return clamp(7+(event?.danger_tier||1)*2+clamp(Number(shift)||0,-1,1)*2,7,19)}
 function rollCheck(event,character,action,proposal,player){
-  if(!proposal.check_required)return null;const skill=proposal.check_skill||chooseSkill(action),die=nextD20(),skillValue=Number(character?.skills?.[skill])||2;
-  const modifier=skillValue-2+Math.floor(((character?.level)||1)-1)/5+(Number(player?.nextRollBonus)||0);if(player)player.nextRollBonus=0;
-  const dc=fixedDc(event,proposal.difficulty_shift),critical=die===20,criticalFail=die===1,success=critical||(!criticalFail&&die+modifier>=dc);
-  return{die,skill,modifier,dc,total:die+modifier,success,critical,criticalFail};
+  if(!proposal.check_required)return null;
+  materializeCharacterCore(character);
+  const picked=chooseCheck(action),die=nextD20(),bonus=Math.floor(((character?.level)||1)-1)/5+(Number(player?.nextRollBonus)||0);if(player)player.nextRollBonus=0;
+  const dc=fixedDc(event,proposal.difficulty_shift);
+  return resolveCheck({character,attribute:proposal.check_attribute||picked.attribute,skill:proposal.check_skill??picked.skill,dc,die,bonus});
 }
 
 function farm(profile, action, music) {
@@ -411,8 +478,13 @@ function sceneGeometryFor(scenario){
   };
   return maps[scenario?.id]||{width:24,depth:18,visibilityRadius:15,anchors:[{id:'center',label:'Центр сцены',x:12,y:9,z:0}]};
 }
+function encounterName(scenario){
+  const names={glass_maze:'Зеркальный страж',black_station:'Пассажир без лица',ash_crown:'Пепельный латник',red_orbit:'Аварийный дрон',bone_foundry:'Костяной кузнец',drowned_cathedral:'Служитель глубины',ember_archive:'Архивариус',iron_rain:'Штурмовик Бури',null_garden:'Нулевая тень'};
+  return names[scenario?.id]||'Угроза события';
+}
 function createScene(scenario,narration){
-  return {id:id('scene'),title:scenario?.title||'Сцена',narration:narration??scenario?.opening??'',music_state:'explore',intensity:.25,loot:[],geometry:sceneGeometryFor(scenario)};
+  const hostile=createNpcCombatant({id:id('enemy'),name:encounterName(scenario),tier:scenario?.danger_tier||1});
+  return {id:id('scene'),title:scenario?.title||'Сцена',narration:narration??scenario?.opening??'',music_state:'explore',intensity:.25,loot:[],combatants:[hostile],geometry:sceneGeometryFor(scenario)};
 }
 function spawnPosition(scene,index=0){
   const a=scene.geometry?.anchors?.[0]||{x:0,y:0,z:0};
@@ -432,7 +504,7 @@ function personalPOV(room,profileId){
 async function createPersistentCharacter(p,wish,appearance){
   if(p.characters.filter(x=>x.status==='alive').length>=p.characterSlots)throw new Error('character_slots_full');
   let generated=null;try{generated=await generateCharacterAI(wish,appearance)}catch(e){console.warn('character AI fallback:',e.message)}
-  const c=generated||fallbackCharacter(wish,appearance);
+  const c=materializeCharacterCore(generated||fallbackCharacter(wish,appearance));
   Object.assign(c,{id:c.id||id('char'),status:'alive',xp:Number(c.xp)||0,level:Number(c.level)||1,createdAt:now(),runs:0,wins:0});
   p.characters.push(c);p.activeCharacterId=c.id;syncActiveCharacter(p);saveState();return c;
 }
@@ -614,11 +686,20 @@ async function api(req,res,u){
       r.started=true;r.participantsAtStart=players.length;r.startedAt=now();r.scene.music_state='explore';saveState();return json(res,200,roomView(r));
     }
 
+    const combatAttack=u.pathname.match(/^\/api\/rooms\/([^/]+)\/combat\/attack$/);
+    if(req.method==='POST'&&combatAttack){
+      const r=getRoom(combatAttack[1]);if(!r)return json(res,404,{error:'room_not_found'});if(!r.started||r.completed)return json(res,409,{error:'run_not_active'});
+      const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead'});
+      try{const committed=await commitCombatTurn(r,p,String(b.action||'атакую').slice(0,1200),b);return json(res,200,{...committed,room:roomView(r),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
+    }
+
     const turn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/turn$/);
     if(req.method==='POST'&&turn){
       const r=getRoom(turn[1]);if(!r)return json(res,404,{error:'room_not_found'});if(!r.started||r.completed)return json(res,409,{error:'run_not_active'});
       const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead'});
-      const action=String(b.action||'осматриваюсь').slice(0,1200),proposal=await resolveGMAI(r,action,p),committed=commitTurn(r,p,action,proposal);
+      const action=String(b.action||'осматриваюсь').slice(0,1200);
+      if(isAttackAction(action)){try{const committed=await commitCombatTurn(r,p,action,b);return json(res,200,{...committed,room:roomView(r),profile:publicProfile(p),ai:providerReady('llm')})}catch(e){if(e.message!=='no_hostile_target')throw e}}
+      const proposal=await resolveGMAI(r,action,p),committed=commitTurn(r,p,action,proposal);
       return json(res,200,{...proposal,...committed,room:roomView(r),profile:publicProfile(p),ai:providerReady('llm')});
     }
     const voiceTurn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/voice-turn$/);
@@ -626,7 +707,8 @@ async function api(req,res,u){
       const r=getRoom(voiceTurn[1]);if(!r)return json(res,404,{error:'room_not_found'});if(!r.started||r.completed)return json(res,409,{error:'run_not_active'});
       const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead'});
       const action=await transcribeAudio(b.audioBase64,b.mimeType||'audio/webm');if(!action)return json(res,422,{error:'empty_transcript'});
-      const proposal=await resolveGMAI(r,action,p),committed=commitTurn(r,p,action,proposal);let speechBase64=null;
+      let proposal={},committed;if(isAttackAction(action)){try{committed=await commitCombatTurn(r,p,action,b)}catch(e){if(e.message!=='no_hostile_target')throw e}}
+      if(!committed){proposal=await resolveGMAI(r,action,p);committed=commitTurn(r,p,action,proposal)}let speechBase64=null;
       try{speechBase64=await synthesizeSpeech(committed.narration)}catch(e){console.warn('TTS fallback:',e.message)}
       return json(res,200,{transcript:action,...proposal,...committed,room:roomView(r),profile:publicProfile(p),speechBase64,speechMime:'audio/mpeg'});
     }
