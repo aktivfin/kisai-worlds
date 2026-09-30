@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-const child=spawn(process.execPath,['server.mjs'],{stdio:['ignore','pipe','pipe'],env:{...process.env}});
+const child=spawn(process.execPath,['server.mjs'],{stdio:['ignore','pipe','pipe'],env:{...process.env,KISAI_TEST_DICE:'20,1,1'}});
 let stderr='';child.stderr.on('data',d=>stderr+=d);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
