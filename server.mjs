@@ -10,6 +10,7 @@ const PUBLIC = path.join(__dirname, 'public');
 const CONFIG_FILE = path.join(DATA, 'config.json');
 const CONFIG_EXAMPLE = path.join(DATA, 'config.example.json');
 const SCENARIOS_FILE = path.join(DATA, 'scenarios.json');
+const CRAFTING_FILE = path.join(DATA, 'crafting.json');
 const STATE_FILE = path.join(DATA, 'state.json');
 const ITEM_MEDIA_DIR = path.join(DATA, 'runtime', 'item-cards');
 
@@ -23,6 +24,7 @@ const readJson = (file, fallback) => {
 const writeJson = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 2));
 const config = readJson(CONFIG_FILE, { port: 8787 });
 const scenarios = readJson(SCENARIOS_FILE, []);
+const crafting = readJson(CRAFTING_FILE, {materials:{},recipes:[]});
 const persisted = readJson(STATE_FILE, { profiles: {}, market: [], transactions: [] });
 
 const rooms = new Map();
@@ -132,21 +134,72 @@ function commitTurn(r,p,action,result){
   return {earned,loot,deathDrop};
 }
 
+function starterInventory(){
+  const out=[];
+  for(const [catalogId,quantity] of Object.entries({herb:4,cloth:4,crystal:3,ember_salt:1,frost_heart:1})){
+    const def=crafting.materials[catalogId];if(!def)continue;
+    out.push({id:id('stack'),catalogId,kind:def.kind,name:def.name,quantity,stackable:true,slotCost:def.slot_cost||1,status:'owned'});
+  }
+  return out;
+}
+function syncActiveCharacter(p){
+  p.characters=Array.isArray(p.characters)?p.characters:[];
+  let active=p.characters.find(x=>x.id===p.activeCharacterId&&x.status==='alive')||p.characters.find(x=>x.status==='alive')||null;
+  p.activeCharacterId=active?.id||null;p.character=active;p.alive=Boolean(active);return active;
+}
+function migrateProfile(p){
+  p.characterSlots=Number(p.characterSlots)||3;p.eventTickets=Number.isFinite(p.eventTickets)?p.eventTickets:2;p.subscription=p.subscription||{active:false,expiresAt:null};
+  p.inventory=Array.isArray(p.inventory)?p.inventory:[];p.characters=Array.isArray(p.characters)?p.characters:[];
+  if(p.character&&p.characters.length===0){
+    const old={...p.character,id:p.character.id||id('char'),status:p.alive===false?'dead':'alive',xp:Number(p.character.xp)||0,level:Number(p.character.level)||1,createdAt:now(),runs:0,wins:0};
+    p.characters.push(old);if(old.status==='alive')p.activeCharacterId=old.id;
+  }
+  syncActiveCharacter(p);return p;
+}
 function ensureProfile(name='Игрок') {
-  const key = normalize(name) || 'player';
-  if (!persisted.profiles[key]) {
-    persisted.profiles[key] = {
-      id:id('profile'), name:String(name).trim()||'Игрок', balance:120, farmToday:0, farmDay:new Date().toISOString().slice(0,10),
-      inventory:[], equipped:{weapon:null,armor:null,charm:null,tool:null}, recentActions:[], character:null, alive:true
-    };
+  const key=normalize(name)||'player';
+  if(!persisted.profiles[key]){
+    persisted.profiles[key]={id:id('profile'),name:String(name).trim()||'Игрок',balance:120,farmToday:0,farmDay:new Date().toISOString().slice(0,10),inventory:starterInventory(),recentActions:[],characterSlots:3,characters:[],activeCharacterId:null,eventTickets:2,subscription:{active:false,expiresAt:null}};
     saveState();
   }
-  const p=persisted.profiles[key];
-  const day=new Date().toISOString().slice(0,10);
+  const p=migrateProfile(persisted.profiles[key]),day=new Date().toISOString().slice(0,10);
   if(p.farmDay!==day){p.farmDay=day;p.farmToday=0;p.recentActions=[];saveState();}
   return p;
 }
-function publicProfile(p){ return {id:p.id,name:p.name,balance:p.balance,farmToday:p.farmToday,inventory:p.inventory,equipped:p.equipped,character:p.character,alive:p.alive,transactions:persisted.transactions.filter(x=>x.profileId===p.id).slice(0,30)}; }
+function publicProfile(p){
+  syncActiveCharacter(p);
+  return {id:p.id,name:p.name,balance:p.balance,farmToday:p.farmToday,inventory:p.inventory,character:p.character,alive:p.alive,
+    characterSlots:p.characterSlots,usedSlots:p.characters.filter(x=>x.status==='alive').length,characters:p.characters,activeCharacterId:p.activeCharacterId,
+    eventTickets:p.eventTickets,subscription:p.subscription,transactions:persisted.transactions.filter(x=>x.profileId===p.id).slice(0,40)};
+}
+function xpNeeded(level){return 100+Math.max(0,level-1)*80}
+function grantXp(character,amount){
+  character.xp=(character.xp||0)+Math.max(0,Math.floor(amount));let levels=0;
+  while(character.xp>=xpNeeded(character.level||1)&&(character.level||1)<50){character.xp-=xpNeeded(character.level||1);character.level=(character.level||1)+1;levels++}
+  return levels;
+}
+function runCapacity(character){return clamp(6+Math.floor(((character?.level)||1)-1)/5,6,10)}
+function stackCost(item,quantity){return Math.max(1,Number(item.slotCost)||1)*Math.max(1,quantity??item.quantity??1)}
+function inventoryUsage(items){return (items||[]).reduce((n,x)=>n+stackCost(x),0)}
+function addToStash(p,item){
+  item.status='owned';item.ownerId=p.id;
+  if(item.stackable){const same=p.inventory.find(x=>x.stackable&&x.catalogId===item.catalogId&&x.kind===item.kind);if(same){same.quantity=(same.quantity||0)+(item.quantity||1);return same}}
+  p.inventory.push(item);return item;
+}
+function canTakeFromStash(p,itemId,quantity=1){const item=p.inventory.find(x=>x.id===itemId);return Boolean(item&&(item.stackable?(item.quantity||0)>=quantity:quantity===1))}
+function takeFromStash(p,itemId,quantity=1){
+  const idx=p.inventory.findIndex(x=>x.id===itemId);if(idx<0)throw new Error('item_not_found');const item=p.inventory[idx];
+  if(item.stackable){if((item.quantity||0)<quantity)throw new Error('insufficient_quantity');item.quantity-=quantity;const out={...item,id:id('runstack'),quantity,status:'run',ownerId:p.id};if(item.quantity<=0)p.inventory.splice(idx,1);return out}
+  p.inventory.splice(idx,1);return {...item,status:'run',ownerId:p.id};
+}
+function consumeInventoryItem(items,itemId,quantity=1){
+  const idx=items.findIndex(x=>x.id===itemId);if(idx<0)throw new Error('item_not_found');const item=items[idx];
+  if(item.stackable){if((item.quantity||0)<quantity)throw new Error('insufficient_quantity');item.quantity-=quantity;if(item.quantity<=0)items.splice(idx,1);return item}
+  if(quantity!==1)throw new Error('insufficient_quantity');items.splice(idx,1);return item;
+}
+function materialItem(catalogId,quantity=1,status='scene'){
+  const d=crafting.materials[catalogId];if(!d)return null;return{id:id('stack'),catalogId,kind:d.kind,name:d.name,quantity,stackable:true,slotCost:d.slot_cost||1,status};
+}
 
 const rarities=['common','uncommon','rare','epic','relic','mythic'];
 const rarityBudget={common:2,uncommon:3,rare:5,epic:7,relic:10,mythic:14};
