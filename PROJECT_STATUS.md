@@ -48,9 +48,12 @@ The smoke test now covers:
 - objective completion and extraction;
 - XP + guaranteed unique rewards;
 - user-defined market price;
+- per-player paid-event entitlement consumption;
+- adventure-only forge movement and enchantment resolution;
 - permanent death;
 - dropped unique-item recovery by an ally;
-- extraction of the recovered item.
+- extraction of the recovered item;
+- one-active-expedition-per-account invariant.
 
 Current source/runtime lane: PASS.
 
