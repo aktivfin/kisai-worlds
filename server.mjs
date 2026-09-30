@@ -265,7 +265,7 @@ async function createCharacterForProfile(p,wish,appearance){
 }
 function attachCharacterToRoom(room,p,character){
   const pl=room.players.get(p.id);if(!pl)throw new Error('player_not_in_room');
-  pl.characterId=character.id;pl.character=character;pl.ready=true;pl.alive=true;pl.wounds=0;pl.nextRollBonus=0;pl.capacity=Math.min(room.scenario.inventory_slots||runCapacity(character),runCapacity(character));pl.pendingLoadout=[];pl.runInventory=[];
+  pl.characterId=character.id;pl.character=character;pl.ready=true;pl.alive=true;pl.wounds=0;pl.nextRollBonus=0;pl.capacity=runCapacity(character);pl.pendingLoadout=[];pl.runInventory=[];
 }
 function findActiveRun(profileId){
   for(const room of rooms.values())if(room.started&&!room.completed&&room.players.has(profileId))return room;
