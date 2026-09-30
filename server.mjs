@@ -139,6 +139,21 @@ function equippedRunWeapon(profile,player){
   const equippedId=profile.equipped?.weapon;
   return (player.runInventory||[]).find(x=>x.id===equippedId)||(player.runInventory||[]).find(x=>x.kind==='equipment'&&x.slot==='weapon')||null;
 }
+function equippedRunArmor(profile,player){
+  const equippedId=profile.equipped?.armor;
+  return (player.runInventory||[]).find(x=>x.id===equippedId)||(player.runInventory||[]).find(x=>x.kind==='equipment'&&x.slot==='armor')||null;
+}
+function playerCombatDefender(profile,player){
+  const c=materializeCharacterCore(profile.character||player.character),armor=equippedRunArmor(profile,player);
+  return{...c,combat:c.combat,injuries:c.injuries,equipment:{...(c.equipment||{}),chest:armor||null}};
+}
+function counterNarrative(target,counter){
+  if(!counter)return'';
+  if(!counter.hit)return target.name+' пытается ответить, но не попадает.';
+  const hp=counter.damage?.hp||0,arm=counter.armor?.before||0;
+  if(hp===0)return target.name+' отвечает ударом, но защита героя полностью поглощает урон.';
+  return target.name+' отвечает: '+(counter.damage?.raw||0)+' урона − броня '+arm+' = '+hp+' HP.';
+}
 function combatNarrativeFallback(actor,target,result){
   if(!result.hit)return (actor.character?.name||actor.name)+' атакует, но '+target.name+' уходит от удара.';
   const armor=result.armor?.before||0,hp=result.damage?.hp||0;
@@ -158,12 +173,21 @@ async function commitCombatTurn(r,p,action,{targetId=null,abilityId=null,targetA
   const ability=(character.abilities||[]).find(x=>x.id===abilityId)||selectAttackAbility(character,action),area=targetArea||attackArea(action),isAimed=aimed??area!=='torso';
   const weapon=equippedRunWeapon(p,player),combat=resolveAttack({attacker:character,defender:target,ability,targetArea:area,aimed:isAimed,attackDie:nextD20(),damageRng:max=>crypto.randomInt(1,max+1),weapon});
   const skillGrowth=ability.skill?recordSkillUse(character,{name:ability.skill,attribute:ability.attackAttribute||'agility',success:combat.hit}):null;
-  const narration=await narrateCombatOutcome(r,p,action,target,combat);
+  let narration=await narrateCombatOutcome(r,p,action,target,combat),counterattack=null,deathDrop=[];
+  if(!combat.killed&&target.status!=='dead'){
+    const enemyAbility=target.abilities?.[0]||balanceAbilityFantasy('Удар',target.level||1),defender=playerCombatDefender(p,player);
+    counterattack=resolveAttack({attacker:target,defender,ability:enemyAbility,targetArea:'torso',aimed:false,attackDie:nextD20(),damageRng:max=>crypto.randomInt(1,max+1)});
+    narration+=' '+counterNarrative(target,counterattack);
+    if(defender.combat?.hp_current<=0){
+      deathDrop=dropCharacterInventory(r,p);narration+=' Персонаж больше не способен продолжать бой; его походное снаряжение остаётся в сцене.';
+    }
+  }
   const gain=combat.killed?24+(r.scenario.danger_tier||1)*4:combat.hit?8:2;r.progress=clamp((r.progress||0)+gain,0,100);
-  r.scene.narration=narration;r.scene.music_state=combat.killed?'discovery':'tension';r.scene.intensity=combat.killed?.45:.82;
-  r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,action,narration,combat});
+  r.scene.narration=narration;r.scene.music_state=deathDrop.length?'grief':combat.killed?'discovery':'tension';r.scene.intensity=deathDrop.length?.95:combat.killed?.45:.82;
+  r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,action,narration,combat,counterattack});
   const alive=[...r.players.values()].filter(x=>x.alive);if(alive.length)r.turnIndex=(r.turnIndex+1)%alive.length;
-  saveState();return{narration,music_state:r.scene.music_state,intensity:r.scene.intensity,combat,skillGrowth,progress:r.progress};
+  if(!alive.length){r.completed=true;r.outcome='wipe';for(const item of r.scene.loot){item.status='lost'}r.scene.loot=[]}
+  saveState();return{narration,music_state:r.scene.music_state,intensity:r.scene.intensity,combat,counterattack,skillGrowth,deathDrop,progress:r.progress};
 }
 
 function commitTurn(r,p,action,result){
@@ -539,9 +563,9 @@ function finishRun(r){
 function useRunItem(r,player,itemId){
   const item=(player.runInventory||[]).find(x=>x.id===itemId&&x.kind==='consumable');if(!item)throw new Error('consumable_not_found');
   const effect=item.effect||{};consumeInventoryItem(player.runInventory,item.id,1);
-  if(effect.type==='heal_wound')player.wounds=Math.max(0,(player.wounds||0)-(Number(effect.value)||1));
+  if(effect.type==='heal_wound'){player.wounds=Math.max(0,(player.wounds||0)-(Number(effect.value)||1));const c=materializeCharacterCore(player.profile?.character||player.character);c.combat.hp_current=Math.min(c.combat.hp_max,c.combat.hp_current+(Number(effect.value)||1)*4)}
   if(['roll_bonus','traversal','escape'].includes(effect.type))player.nextRollBonus=Math.max(Number(player.nextRollBonus)||0,Number(effect.value)||1);
-  saveState();return{effect,wounds:player.wounds,nextRollBonus:player.nextRollBonus||0};
+  saveState();return{effect,wounds:player.wounds,hp:player.character?.combat?.hp_current??player.profile?.character?.combat?.hp_current??null,nextRollBonus:player.nextRollBonus||0};
 }
 function enchantItem(r,player,targetId,ingredientIds){
   const facility=r.scenario.enchantment;if(!facility)throw new Error('event_has_no_enchanting');
@@ -569,7 +593,8 @@ function enchantItem(r,player,targetId,ingredientIds){
 
 function getRoom(c){ return rooms.get(String(c||'').toUpperCase()); }
 function runDefenseView(player){
-  const c=materializeCharacterCore(player.character||player.profile?.character||{});
+  const source=player.character||player.profile?.character;if(!source)return{hp_current:null,hp_max:null,evasion:null,initiative:null,armor:null};
+  const c=materializeCharacterCore(source);
   const equippedId=player.profile?.equipped?.armor;
   const armor=(player.runInventory||[]).find(x=>x.id===equippedId)||(player.runInventory||[]).find(x=>x.kind==='equipment'&&x.slot==='armor')||null;
   return{hp_current:c.combat?.hp_current??null,hp_max:c.combat?.hp_max??null,evasion:c.combat?.evasion??null,initiative:c.combat?.initiative??null,
