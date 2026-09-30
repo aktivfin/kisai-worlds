@@ -204,7 +204,8 @@ function openItemInspector(i,{listing=null}={}){
   const owned=!listing&&(S.profile?.inventory||[]).some(x=>x.id===i.id);
   $('#inspectorBody').innerHTML=(epic?'<div class="itemVisualCard">'+(i.visual?.url?'<img src="'+esc(i.visual.url)+'" alt="">':'<div class="visualPlaceholder"><span>✦</span><small>EPIC+ VISUAL</small></div>')+'</div>':'')+
     '<div class="inspectorRarity">'+esc(i.rarity||i.kind||'item')+' · LVL '+(i.level||1)+'</div><h2>'+esc(i.name)+'</h2><p>'+esc(i.lore||'')+'</p><p>'+esc(i.passive||'')+'</p>'+
-    '<div class="itemCoreStats"><span>Тип <b>'+esc(i.slot||i.kind||'—')+'</b></span><span>Power <b>'+(i.power||0)+'</b></span><span>Serial <b>'+esc(i.serial||'—')+'</b></span></div>'+adaptive+market+ench+
+    '<div class="itemCoreStats"><span>Тип <b>'+esc(i.slot||i.kind||'—')+'</b></span><span>Power <b>'+(i.power||0)+'</b></span><span>Serial <b>'+esc(i.serial||'—')+'</b></span></div>'+
+    (i.kind==='equipment'?'<div class="physicalState"><span>Состояние <b>'+Math.round(i.durability??100)+'%</b></span><span>'+esc(i.condition||'intact')+'</span>'+(i.baseArmor?'<span>Броня <b>'+i.baseArmor+'</b></span>':'')+(i.baseDamage?'<span>Урон <b>'+esc(i.baseDamage)+(i.damageBonus?' +'+i.damageBonus:'')+'</b></span>':'')+'</div>':'')+adaptive+market+ench+
     (provenance?'<div class="provenance"><small>PROVENANCE</small>'+provenance+'</div>':'')+
     '<div class="itemActions">'+(owned&&i.kind==='equipment'?'<button id="equipItem" class="softBtn">'+(equipped?'Снять':'Надеть')+'</button>':'')+(owned&&epic&&!i.visual?.url?'<button id="genItemVisual" class="softBtn">✦ Visual card</button>':'')+'</div>'+
     (owned&&i.kind==='equipment'?'<div class="sellRow"><input id="sellPrice" type="number" min="1" placeholder="Цена KAI"><button id="sellItem" class="goldBtn">Выставить</button></div>':'');
@@ -253,7 +254,16 @@ function renderRoom(){
 }
 function renderCharacterCard(c){
   if(!c){$('#charCard').innerHTML='';return}
-  $('#charCard').innerHTML='<div class="generatedCharacter"><div class="charTitle"><small>LEVEL '+c.level+' · XP '+(c.xp||0)+'</small><h3>'+esc(c.name||c.archetype)+'</h3></div><p>'+esc(c.concept)+'</p><div class="skillGrid">'+Object.entries(c.skills||{}).map(([k,v])=>'<span><b>'+esc(k)+'</b><i>'+v+'</i></span>').join('')+'</div><div class="abilityList">'+(c.abilities||[]).map(a=>'<span>✦ '+esc(a)+'</span>').join('')+'</div></div>';
+  const labels={strength:'СИЛ',agility:'ЛОВ',endurance:'ВЫН',perception:'ВОС',intelligence:'ИНТ',charisma:'ХАР'};
+  const attrs=Object.entries(c.attributes||{}).map(([k,v])=>'<span><b>'+esc(labels[k]||k)+'</b><i>'+(v>=0?'+':'')+v+'</i></span>').join('');
+  const skills=(c.dynamicSkills||[]).map(s=>'<span><b>'+esc(s.name)+'</b><i>+'+(s.rank||0)+'</i></span>').join('');
+  const abilities=(c.abilities||[]).map(x=>typeof x==='string'?'<span>✦ '+esc(x)+'</span>':'<span class="abilityMechanic"><b>✦ '+esc(x.name)+'</b><small>'+esc(x.damage||'—')+' · '+(x.range||0)+' м · '+(x.targets||1)+' цель · '+esc(x.damageType||'effect')+(x.cooldown?' · CD '+x.cooldown:'')+'</small></span>').join('');
+  const combat=c.combat||{};
+  $('#charCard').innerHTML='<div class="generatedCharacter"><div class="charTitle"><small>LEVEL '+c.level+' · XP '+(c.xp||0)+' · CORE '+esc(c.coreVersion||'legacy')+'</small><h3>'+esc(c.name||c.archetype)+'</h3></div><p>'+esc(c.concept)+'</p>'+
+    '<div class="combatSummary"><span>HP <b>'+(combat.hp_current??'—')+'/'+(combat.hp_max??'—')+'</b></span><span>Уклонение <b>'+(combat.evasion??'—')+'</b></span><span>Инициатива <b>'+((combat.initiative??0)>=0?'+':'')+(combat.initiative??0)+'</b></span></div>'+
+    '<p class="railLabel">ХАРАКТЕРИСТИКИ</p><div class="skillGrid attributesGrid">'+attrs+'</div>'+
+    (skills?'<p class="railLabel">ДИНАМИЧЕСКИЕ НАВЫКИ</p><div class="skillGrid">'+skills+'</div>':'')+
+    '<p class="railLabel">СПОСОБНОСТИ</p><div class="abilityList">'+abilities+'</div></div>';
 }
 function myRoomPlayer(){return S.room?.players?.find(p=>p.id===S.profile?.id)||null}
 function loadoutPreview(){
@@ -298,16 +308,30 @@ function renderGame(result=null){
   if($('#myStats'))$('#myStats').innerHTML=me?'<small>ТВОЙ ГЕРОЙ</small><b>'+esc(me.character?.name||me.character?.archetype||'—')+'</b><span>Раны '+me.wounds+'/3 · Рюкзак '+me.runUsage+'/'+me.capacity+'</span>':'';
   const ctx=$('#sceneContext');if(ctx)ctx.innerHTML='<small>ТЕКУЩАЯ ПОЗИЦИЯ</small><b>'+esc(me?.position?.anchorId||'canonical scene')+'</b><span>'+esc(event?.genre||'Экспедиция')+' · опасность T'+(event?.danger_tier||1)+'</span>';
   renderRunInventory();
+  renderThreats();
   renderSceneLoot();
   renderActionLog();
   if(result?.dice)animateDice(result.dice);
+  if(result?.combat)animateCombat(result.combat);
   music(sc.music_state||'explore');
   renderPOV();
+}
+function animateCombat(c){
+  const box=$('#diceResult');if(!box)return;box.classList.remove('success','fail','rolling');box.classList.add(c.hit?'success':'fail');
+  box.textContent=c.hit?'d20 '+c.attack.die+' + '+c.attack.accuracy+' = '+c.attack.total+' / EVA '+c.attack.evasion+' · '+(c.damage?.hp||0)+' HP':'d20 '+c.attack.die+' + '+c.attack.accuracy+' = '+c.attack.total+' / EVA '+c.attack.evasion+' · MISS';
 }
 function animateDice(d){
   const box=$('#diceResult');if(!box)return;
   box.classList.remove('success','fail');box.classList.add('rolling');let n=0;
   const timer=setInterval(()=>{box.textContent='d20 '+(1+Math.floor(Math.random()*20));if(++n>7){clearInterval(timer);box.classList.remove('rolling');box.classList.add(d.success?'success':'fail');box.textContent='d20 '+d.die+' '+(d.modifier>=0?'+':'')+d.modifier+' = '+d.total+' / DC '+d.dc}},55);
+}
+function renderThreats(){
+  const box=$('#sceneThreats');if(!box)return;const threats=(S.room?.scene?.combatants||[]);
+  box.innerHTML=threats.length?'<p class="railLabel">УГРОЗЫ</p>'+threats.map(t=>{
+    const armor=t.equipment?.chest,dead=t.status==='dead',hp=t.combat?.hp_current??0,max=t.combat?.hp_max??0,pct=max?Math.round(hp/max*100):0;
+    const condition=armor?.condition||'—';
+    return '<div class="threatCard '+(dead?'dead':'')+'"><div><b>'+esc(t.name)+'</b><small>'+esc(dead?'устранён':'враждебен')+'</small></div><span>HP '+hp+'/'+max+' · EVA '+(t.combat?.evasion??'—')+'</span><div class="threatHp"><i style="width:'+pct+'%"></i></div><small>Броня '+(armor?.baseArmor??armor?.armor??0)+' · '+esc(condition)+' · '+Math.round(armor?.durability??0)+'%</small></div>';
+  }).join(''):'';
 }
 function renderSceneLoot(){
   const box=$('#sceneLoot');if(!box)return;
@@ -331,7 +355,7 @@ function renderRunInventory(){
 }
 function renderActionLog(){
   const box=$('#log');if(!box)return;const rows=S.room?.log||[];
-  box.innerHTML=rows.length?rows.map(x=>'<div class="actionLogRow"><div><time>'+new Date(x.at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</time><b>'+esc(x.actor)+'</b></div><span>'+esc(x.action)+'</span>'+(x.roll?'<em class="'+(x.roll.success?'success':'fail')+'">d20 '+x.roll.die+' → '+x.roll.total+' / DC '+x.roll.dc+'</em>':'')+'</div>').join(''):'<div class="emptyState compact">Ходов пока нет.</div>';
+  box.innerHTML=rows.length?rows.map(x=>{const mech=x.combat?'<em class="'+(x.combat.hit?'success':'fail')+'">АТАКА '+x.combat.attack.die+' + '+x.combat.attack.accuracy+' = '+x.combat.attack.total+' / EVA '+x.combat.attack.evasion+(x.combat.hit?' · DMG '+(x.combat.damage?.raw||0)+' − ARM '+(x.combat.armor?.before||0)+' = '+(x.combat.damage?.hp||0):' · ПРОМАХ')+'</em>':x.roll?'<em class="'+(x.roll.success?'success':'fail')+'">d20 '+x.roll.die+' → '+x.roll.total+' / DC '+x.roll.dc+'</em>':'';return '<div class="actionLogRow"><div><time>'+new Date(x.at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</time><b>'+esc(x.actor)+'</b></div><span>'+esc(x.action)+'</span>'+mech+'</div>'}).join(''):'<div class="emptyState compact">Ходов пока нет.</div>';
 }
 async function renderPOV(){
   if(!S.room||!S.name)return;
