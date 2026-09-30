@@ -28,6 +28,7 @@
       <div id="musicNow" class="musicNow" title="Adaptive soundtrack"><span>♫</span><div><small>ADAPTIVE SCORE</small><b id="musicTitle">ожидание</b></div></div><button id="settingsBtn" class="iconBtn">⚙ <span>AI</span></button>
     </div>
   </header>
+  <div id="globalStatus" class="globalStatus hidden" role="status" aria-live="polite"></div>
   <main>
     <section id="home" class="screen active homeScreen">
       <div class="homeBackdrop homeBackdropA visible"></div><div class="homeBackdrop homeBackdropB"></div><div class="homeShade"></div>
@@ -88,7 +89,7 @@
         <div class="partyColumn">
           <div class="glass panelHead"><span>Игроки</span><small id="playerCount">1 / 5</small></div>
           <div id="players" class="playerCards"></div>
-          <div class="voiceCheck glass"><div class="micPulse">🎙</div><div><b>Голосовая партия</b><p>Живой голос игрока слышат остальные; AI параллельно превращает речь в действие.</p></div><span class="statusOk">ГОТОВО</span></div>
+          <div class="voiceCheck glass"><div class="micPulse">🎙</div><div><b>Голосовая партия</b><p>Push-to-talk отправляет речь в STT → AI GM → TTS. Постоянный party voice transport пока не реализован.</p></div><span class="statusOk">ГОТОВО</span></div>
         </div>
         <div class="characterPanel glass">
           <div class="charPanelVisual"><div class="charVisualShade"></div><div class="charVisualText"><p class="eyebrow">ТВОЙ ГЕРОЙ</p><h3>Опиши кого хочешь играть</h3><p>Нейронка сохранит фантазию персонажа, но адаптирует реальную силу под текущий уровень.</p></div></div>
@@ -97,7 +98,7 @@
             <label>Способности и стиль игры<textarea id="charWish" placeholder="Например: маг пространства. Хочу резать дистанцию, телепортироваться и создавать короткие разломы..."></textarea></label>
             <label>Внешность<textarea id="charAppearance" placeholder="Возраст, лицо, волосы, одежда, оружие, заметные детали..."></textarea></label>
             <div class="charButtons"><button id="genChar" class="softBtn">✦ Сгенерировать и сбалансировать</button><button id="saveChar" class="goldBtn" disabled>Выбрать героя</button></div>
-            <div id="charCard"></div><div class="loadoutBuilder"><div class="paneHead"><div><p class="eyebrow">EXPEDITION LOADOUT</p><h3>Что герой берёт с собой</h3></div><span id="loadoutUsage">0 / 6</span></div><p class="muted">Склад аккаунта безопасен. При смерти выпадает только содержимое этого рюкзака.</p><div id="loadoutGrid" class="loadoutGrid"></div><button id="saveLoadout" class="softBtn wide">Сохранить рюкзак</button></div>
+            <div id="charCard"></div><div class="loadoutBuilder"><div class="paneHead"><div><p class="eyebrow">EXPEDITION LOADOUT</p><h3>Что герой берёт с собой</h3></div><span id="loadoutUsage">0 / 6</span></div><div class="riskSplit"><div class="safeStash"><b>▣ Склад аккаунта — безопасен</b><span>Не теряется при смерти персонажа.</span></div><div class="riskPack"><b>△ Рюкзак экспедиции — под риском</b><span>При смерти его содержимое падает в текущую сцену.</span></div></div><div id="loadoutGrid" class="loadoutGrid"></div><button id="saveLoadout" class="softBtn wide">Сохранить рюкзак</button></div>
           </div>
         </div>
       </div>
@@ -111,12 +112,12 @@
           <div id="sceneArt" class="sceneArt"><div class="sceneParallax"></div><div class="vignette"></div><div class="sceneGrain"></div><div class="sceneBadge">CANONICAL SCENE</div></div>
           <div class="narration glass"><div class="gmAvatar">GM</div><div><p class="eyebrow">GAME MASTER</p><p id="gmText"></p></div></div>
           <div class="voiceDock glass">
-            <button id="ptt" class="micButton"><span class="micIcon">🎙</span><span class="micLabel"><b>Удерживай для хода</b><small>Говори естественно — друзья слышат тебя</small></span><span class="wave"><i></i><i></i><i></i><i></i><i></i></span></button>
+            <button id="ptt" class="micButton"><span class="micIcon">🎙</span><span class="micLabel"><b>Удерживай для хода</b><small>Говори естественно — речь станет действием</small></span><span class="wave"><i></i><i></i><i></i><i></i><i></i></span></button>
             <div class="textAction"><input id="textTurn" placeholder="Или введи действие текстом..."><button id="sendText">➤</button></div>
             <div id="voiceStatus" class="voiceStatus"><span></span>Ожидание хода</div>
           </div>
         </div>
-        <aside class="sceneRail glass"><h3>Сцена</h3><div class="sceneThumb active"><img src="assets/game_harbor.jpg" alt=""><span>Текущий кадр</span></div><div class="sceneThumb mutedThumb"><img src="assets/gm_tavern.jpg" alt=""><span>Последний момент</span></div><div class="separator"></div><div id="sceneLoot" class="sceneLoot"></div><p class="railLabel">Журнал</p><div id="log" class="log"></div></aside>
+        <aside class="sceneRail glass"><h3>Сцена</h3><div id="sceneContext" class="sceneContext"></div><div class="sceneThumb active"><img src="assets/game_harbor.jpg" alt=""><span>Текущий кадр</span></div><div class="sceneThumb mutedThumb"><img src="assets/gm_tavern.jpg" alt=""><span>Последний момент</span></div><div class="separator"></div><div id="sceneLoot" class="sceneLoot"></div><p class="railLabel">Журнал</p><div id="log" class="log"></div></aside>
       </div>
     </section>
 
@@ -130,8 +131,7 @@
         <div class="economyLayout">
           <aside class="econSidebar glass">
             <button class="econTab active" data-tab="hero"><span>♙</span><div><b>Герой</b><small>Экипировка и сила</small></div></button>
-            <button class="econTab" data-tab="inventory"><span>▦</span><div><b>Склад</b><small>Безлимитное хранилище аккаунта</small></div></button><button class="econTab" data-tab="craft"><span>⚒</span><div><b>Крафт</b><small>Только расходники</small></div></button>
-            <button class="econTab" data-tab="craft"><span>⚒</span><div><b>Крафт</b><small>Только расходники</small></div></button><button class="econTab" data-tab="market"><span>◇</span><div><b>Рынок</b><small>Покупка и перепродажа</small></div></button>
+            <button class="econTab" data-tab="inventory"><span>▦</span><div><b>Склад</b><small>Безлимитное хранилище аккаунта</small></div></button><button class="econTab" data-tab="craft"><span>⚒</span><div><b>Крафт</b><small>Только расходники</small></div></button><button class="econTab" data-tab="market"><span>◇</span><div><b>Рынок</b><small>Покупка и перепродажа</small></div></button>
             <button class="econTab" data-tab="wallet"><span>◉</span><div><b>Кошелёк</b><small>Фарм и транзакции</small></div></button>
             <div class="ledgerBadge"><i></i><div><b>KisAI Dev Ledger</b><small>Demo · off-chain · без вывода</small></div></div>
           </aside>
@@ -167,7 +167,7 @@
     <section id="install" class="modal hidden"><div class="panel installPanel"><button id="closeInstall" class="x iconBtn">×</button><p class="eyebrow">БЫСТРЫЙ ЗАПУСК</p><h2>Установка KisAI Worlds</h2><div class="installCols"><div class="installCol" data-platform="windows"><h3>Windows</h3><ol><li>Установи Node.js 20+.</li><li>Запусти <code>INSTALL_WINDOWS.ps1</code>.</li><li>Установщик создаст локальный config и ярлык на рабочем столе.</li><li>Для LAN используй <code>START_LAN_WINDOWS.bat</code>.</li></ol><div class="codeBlock">powershell -ExecutionPolicy Bypass -File .\INSTALL_WINDOWS.ps1</div></div><div class="installCol" data-platform="linux"><h3>Linux</h3><ol><li>Установи Node.js 20+.</li><li>Запусти <code>./INSTALL_LINUX.sh</code>.</li><li>Установщик добавит launcher в <code>~/.local/bin</code> без root.</li><li>Для LAN используй <code>./START_LAN_LINUX.sh</code>.</li></ol><div class="codeBlock">chmod +x INSTALL_LINUX.sh && ./INSTALL_LINUX.sh</div></div></div><p class="muted">API-ключи хранятся только в локальном <code>data/config.json</code> и не должны попадать в Git.</p></div></section>
   </main>
   <div id="transition" class="transition"><div class="transitionArt"></div><div class="transitionShade"></div><div class="transitionCore"><span class="sigil big">K</span><small>ENTERING KISAI WORLD</small><p>Загружаем мир…</p><i></i></div></div>
-  <div id="toast" class="toast"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </div>
 <script src="app.js"></script>
 </body>
