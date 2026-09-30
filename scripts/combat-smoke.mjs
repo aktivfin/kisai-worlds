@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {resolveAttack,effectiveArmor,targetedEvasion,conditionLabel} from '../core/combat.mjs';
-import {balanceAbilityFantasy,materializeCharacterCore} from '../core/character.mjs';
+import {balanceAbilityFantasy,materializeCharacterCore,recordSkillUse,maxDynamicSkillRank} from '../core/character.mjs';
 import {spawn} from 'node:child_process';
 
 {
@@ -41,6 +41,13 @@ import {spawn} from 'node:child_process';
   const aoe=balanceAbilityFantasy('Облако разрезов вокруг меня',1);
   assert.equal(aoe.damage,'1d6');
   assert.ok(aoe.targets>1);
+  const learner=materializeCharacterCore({level:1,concept:'обычный путешественник',abilities:['Удар']});
+  const before=learner.dynamicSkills.length;
+  for(let n=0;n<4;n++)recordSkillUse(learner,{name:'Медицина',attribute:'intelligence',success:false});
+  const learned=learner.dynamicSkills.find(x=>x.name==='Медицина');
+  assert.equal(learner.dynamicSkills.length,before+1,'repeated relevant actions should create a dynamic skill');
+  assert.equal(learned.rank,1);
+  assert.equal(maxDynamicSkillRank(1),2);
 }
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
