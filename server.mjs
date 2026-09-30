@@ -144,7 +144,7 @@ function ensureProfile(name='Игрок') {
   if(p.farmDay!==day){p.farmDay=day;p.farmToday=0;p.recentActions=[];saveState();}
   return p;
 }
-function publicProfile(p){ return {id:p.id,name:p.name,balance:p.balance,farmToday:p.farmToday,inventory:p.inventory,equipped:p.equipped,character:p.character,alive:p.alive}; }
+function publicProfile(p){ return {id:p.id,name:p.name,balance:p.balance,farmToday:p.farmToday,inventory:p.inventory,equipped:p.equipped,character:p.character,alive:p.alive,transactions:persisted.transactions.filter(x=>x.profileId===p.id).slice(0,30)}; }
 
 const rarities=['common','uncommon','rare','epic','relic','mythic'];
 const rarityBudget={common:2,uncommon:3,rare:5,epic:7,relic:10,mythic:14};
@@ -254,11 +254,22 @@ async function api(req,res,u){
       const [item]=r.scene.loot.splice(idx,1);item.status='owned';item.ownerId=p.id;item.provenance.push({at:now(),type:'claimed',owner:p.id,sceneId:r.scene.id});p.inventory.push(item);saveState();
       return json(res,200,{item,room:roomView(r),profile:publicProfile(p)});
     }
+        if(req.method==='POST'&&u.pathname==='/api/profile/equip'){
+      const b=await body(req),p=ensureProfile(b.name);if(!p.alive)return json(res,409,{error:'character_dead'});
+      const item=p.inventory.find(x=>x.id===b.itemId);if(!item)return json(res,404,{error:'item_not_found'});
+      if(!['weapon','armor','charm','tool'].includes(item.slot))return json(res,409,{error:'invalid_slot'});
+      p.equipped[item.slot]=item.id;saveState();return json(res,200,publicProfile(p));
+    }
+    if(req.method==='POST'&&u.pathname==='/api/profile/unequip'){
+      const b=await body(req),p=ensureProfile(b.name),slot=String(b.slot||'');
+      if(!['weapon','armor','charm','tool'].includes(slot))return json(res,409,{error:'invalid_slot'});
+      p.equipped[slot]=null;saveState();return json(res,200,publicProfile(p));
+    }
     if(req.method==='GET'&&u.pathname==='/api/profile'){const p=ensureProfile(u.searchParams.get('name'));return json(res,200,publicProfile(p));}
     if(req.method==='GET'&&u.pathname==='/api/market') return json(res,200,persisted.market.filter(x=>x.status==='active'));
-    if(req.method==='POST'&&u.pathname==='/api/market/list'){const b=await body(req),p=ensureProfile(b.name),idx=p.inventory.findIndex(x=>x.id===b.itemId);if(idx<0)return json(res,404,{error:'item_not_found'});const [item]=p.inventory.splice(idx,1);item.status='escrow';const listing={id:id('listing'),item,sellerId:p.id,sellerName:p.name,price:clamp(Number(b.price)||1,1,1_000_000),status:'active',createdAt:now()};persisted.market.push(listing);saveState();return json(res,201,listing);}
-    if(req.method==='POST'&&u.pathname==='/api/market/buy'){const b=await body(req),buyer=ensureProfile(b.name),l=persisted.market.find(x=>x.id===b.listingId&&x.status==='active');if(!l)return json(res,404,{error:'listing_not_found'});if(l.sellerId===buyer.id)return json(res,409,{error:'own_listing'});if(buyer.balance<l.price)return json(res,409,{error:'insufficient_balance'});const seller=Object.values(persisted.profiles).find(x=>x.id===l.sellerId);buyer.balance-=l.price;if(seller)seller.balance+=Math.floor(l.price*.975);l.status='sold';l.item.status='owned';l.item.ownerId=buyer.id;l.item.provenance.push({at:now(),type:'trade',from:l.sellerId,to:buyer.id,price:l.price});buyer.inventory.push(l.item);saveState();return json(res,200,{listing:l,profile:publicProfile(buyer)});}
-    if(req.method==='POST'&&u.pathname==='/api/market/cancel'){const b=await body(req),p=ensureProfile(b.name),l=persisted.market.find(x=>x.id===b.listingId&&x.status==='active'&&x.sellerId===p.id);if(!l)return json(res,404,{error:'listing_not_found'});l.status='cancelled';l.item.status='owned';p.inventory.push(l.item);saveState();return json(res,200,{profile:publicProfile(p)});}
+    if(req.method==='POST'&&u.pathname==='/api/market/list'){const b=await body(req),p=ensureProfile(b.name),idx=p.inventory.findIndex(x=>x.id===b.itemId);if(idx<0)return json(res,404,{error:'item_not_found'});const item=p.inventory[idx];if(Object.values(p.equipped||{}).includes(item.id))p.equipped[item.slot]=null;p.inventory.splice(idx,1);item.status='escrow';const listing={id:id('listing'),item,sellerId:p.id,sellerName:p.name,price:clamp(Number(b.price)||1,1,1_000_000),status:'active',createdAt:now()};persisted.market.push(listing);persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'market_list',amount:0,itemId:item.id,price:listing.price});saveState();return json(res,201,listing);}
+    if(req.method==='POST'&&u.pathname==='/api/market/buy'){const b=await body(req),buyer=ensureProfile(b.name),l=persisted.market.find(x=>x.id===b.listingId&&x.status==='active');if(!l)return json(res,404,{error:'listing_not_found'});if(l.sellerId===buyer.id)return json(res,409,{error:'own_listing'});if(buyer.balance<l.price)return json(res,409,{error:'insufficient_balance'});const seller=Object.values(persisted.profiles).find(x=>x.id===l.sellerId),net=Math.floor(l.price*.975),fee=l.price-net;buyer.balance-=l.price;if(seller)seller.balance+=net;l.status='sold';l.item.status='owned';l.item.ownerId=buyer.id;l.item.provenance.push({at:now(),type:'trade',from:l.sellerId,to:buyer.id,price:l.price});buyer.inventory.push(l.item);persisted.transactions.unshift({id:id('tx'),at:now(),profileId:buyer.id,type:'market_buy',amount:-l.price,itemId:l.item.id,counterparty:l.sellerId},{id:id('tx'),at:now(),profileId:l.sellerId,type:'market_sale',amount:net,itemId:l.item.id,counterparty:buyer.id,fee});saveState();return json(res,200,{listing:l,profile:publicProfile(buyer)});}
+    if(req.method==='POST'&&u.pathname==='/api/market/cancel'){const b=await body(req),p=ensureProfile(b.name),l=persisted.market.find(x=>x.id===b.listingId&&x.status==='active'&&x.sellerId===p.id);if(!l)return json(res,404,{error:'listing_not_found'});l.status='cancelled';l.item.status='owned';p.inventory.push(l.item);persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'market_cancel',amount:0,itemId:l.item.id});saveState();return json(res,200,{profile:publicProfile(p)});}
     return json(res,404,{error:'not_found'});
   } catch(e){ console.error(e); return json(res,500,{error:'server_error',message:e.message}); }
 }
