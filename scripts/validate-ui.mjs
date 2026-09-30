@@ -2,7 +2,10 @@ import fs from 'node:fs';
 
 const html=fs.readFileSync('public/index.html','utf8');
 const app=fs.readFileSync('public/app.js','utf8');
-const ids=new Set([...html.matchAll(/\bid=["']([^"']+)["']/g)].map(m=>m[1]));
+const idList=[...html.matchAll(/\bid=["']([^"']+)["']/g)].map(m=>m[1]);
+const duplicateIds=[...new Set(idList.filter((id,i)=>idList.indexOf(id)!==i))];
+if(duplicateIds.length){console.error('Duplicate DOM ids:',duplicateIds.join(', '));process.exit(1);}
+const ids=new Set(idList);
 const dynamic=new Set(['sellPrice','sellItem','equipItem','genItemVisual']);
 const refs=[...app.matchAll(/\$\(\s*['"]#([A-Za-z0-9_-]+)['"]\s*\)/g)].map(m=>m[1]);
 const missing=[...new Set(refs.filter(id=>!ids.has(id)&&!dynamic.has(id)))];
