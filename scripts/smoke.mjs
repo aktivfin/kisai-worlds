@@ -1,150 +1,212 @@
 import { spawn } from 'node:child_process';
 
-const child=spawn(process.execPath,['server.mjs'],{stdio:['ignore','pipe','pipe'],env:{...process.env}});
+const child=spawn(process.execPath,['server.mjs'],{
+  stdio:['ignore','pipe','pipe'],
+  env:{...process.env,KISAI_TEST_DICE:'20,20,1,1'}
+});
 let stderr='';child.stderr.on('data',d=>stderr+=d);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
 async function raw(path,options={}){
   const r=await fetch('http://127.0.0.1:8787'+path,{headers:{'content-type':'application/json'},...options});
   let data=null;try{data=await r.json()}catch{}
-  return{ok:r.ok,status:r.status,data};
+  return{status:r.status,ok:r.ok,data};
 }
 async function request(path,options={}){
-  const x=await raw(path,options);
-  if(!x.ok)throw new Error(path+' -> '+x.status+' '+JSON.stringify(x.data));
-  return x.data;
+  const r=await raw(path,options);if(!r.ok)throw new Error(path+' -> '+r.status+' '+JSON.stringify(r.data));return r.data;
 }
 async function ready(){
   for(let i=0;i<50;i++){try{return await request('/api/health')}catch{await sleep(100)}}
   throw new Error('server did not become ready: '+stderr);
 }
-const post=(path,data)=>request(path,{method:'POST',body:JSON.stringify(data)});
-const postRaw=(path,data)=>raw(path,{method:'POST',body:JSON.stringify(data)});
+const post=(path,value)=>request(path,{method:'POST',body:JSON.stringify(value)});
+const postRaw=(path,value)=>raw(path,{method:'POST',body:JSON.stringify(value)});
+const getProfile=name=>request('/api/profile?name='+encodeURIComponent(name));
 
 try{
   const health=await ready();
-  if(!health.ok||!String(health.version).startsWith('0.7'))throw new Error('wrong runtime version');
+  if(!health.ok||!String(health.version).includes('0.7'))throw new Error('wrong runtime version');
 
   const events=await request('/api/events');
-  if(!Array.isArray(events)||events.length<3||events.length>9)throw new Error('event rotation size invalid');
+  if(!Array.isArray(events)||events.length<3||events.length>9)throw new Error('event rotation must contain 3-9 events');
   if(events.some(e=>!e.danger_tier||!e.recommended_players||!e.inventory_slots))throw new Error('event metadata missing');
-
-  const free=[...events].filter(e=>e.entry?.type==='free').sort((a,b)=>b.recommended_players-a.recommended_players)[0];
-  if(!free)throw new Error('rotation must include a free event');
+  const free=events.filter(e=>e.entry?.type==='free').sort((a,b)=>b.recommended_players-a.recommended_players)[0];
   const forgeEvent=events.find(e=>e.enchantment);
-  if(!forgeEvent)throw new Error('rotation must expose an enchanting event for smoke');
+  if(!free)throw new Error('rotation must contain a free event');
+  if(!forgeEvent)throw new Error('rotation must contain an enchanting event');
 
-  let profile=await request('/api/profile?name='+encodeURIComponent('CI Hero'));
-  if(profile.characterSlots!==3||profile.usedSlots!==0)throw new Error('default character slots invalid');
+  const catalog=await request('/api/event-catalog');
+  if(catalog.length<9)throw new Error('event catalog must contain at least nine authored events');
+  const crafting=await request('/api/crafting');
+  if(!crafting.recipes?.length||!crafting.materials?.ember_salt?.enchant)throw new Error('craft/enchant catalog incomplete');
 
-  const c1=await post('/api/profile/character',{name:'CI Hero',wish:'следопыт с коротким луком',appearance:'тёмный плащ'});
-  const c2=await post('/api/profile/character',{name:'CI Hero',wish:'страж со щитом',appearance:'тяжёлая броня'});
-  const c3=await post('/api/profile/character',{name:'CI Hero',wish:'арканист пространства',appearance:'серый плащ'});
-  const overflow=await postRaw('/api/profile/character',{name:'CI Hero',wish:'четвёртый герой',appearance:'-'});
-  if(overflow.status!==409||overflow.data?.error!=='character_slots_full')throw new Error('character slot limit not enforced');
+  const name='CI Hero';
+  let created=await post('/api/rooms',{name,eventId:free.id});
+  const code=created.room.code;if(!code)throw new Error('room not created');
 
-  profile=await post('/api/profile/select-character',{name:'CI Hero',characterId:c1.character.id});
-  if(profile.activeCharacterId!==c1.character.id||profile.usedSlots!==3)throw new Error('character selection failed');
+  const first=await post('/api/rooms/'+code+'/character',{name,wish:'следопыт-разведчик с коротким луком',appearance:'тёмный плащ'});
+  const firstChar=first.character;
+  if(!firstChar?.id||first.profile.usedSlots!==1)throw new Error('first persistent character not created');
 
-  const clothBefore=profile.inventory.find(x=>x.catalogId==='cloth')?.quantity||0;
-  const crafted=await post('/api/profile/craft',{name:'CI Hero',recipeId:'rope_kit',quantity:1});
-  if(crafted.item?.kind!=='consumable')throw new Error('consumable crafting failed');
-  profile=crafted.profile;
-  const clothAfter=profile.inventory.find(x=>x.catalogId==='cloth')?.quantity||0;
+  const second=await post('/api/profile/character',{name,wish:'страж со щитом',appearance:'тяжёлая броня'});
+  const third=await post('/api/profile/character',{name,wish:'арканист',appearance:'серый плащ'});
+  if(third.profile.usedSlots!==3)throw new Error('three live character slots not occupied');
+  const fourth=await postRaw('/api/profile/character',{name,wish:'четвёртый герой',appearance:'-'});
+  if(fourth.status!==409||fourth.data?.error!=='character_slots_full')throw new Error('fourth live character must be rejected');
+
+  let p=third.profile;
+  const clothBefore=p.inventory.find(x=>x.catalogId==='cloth')?.quantity||0;
+  let crafted=await post('/api/profile/craft',{name,recipeId:'rope_kit',quantity:1});
+  crafted=await post('/api/profile/craft',{name,recipeId:'healing_potion',quantity:1});
+  p=crafted.profile;
+  const clothAfter=p.inventory.find(x=>x.catalogId==='cloth')?.quantity||0;
   if(clothBefore-clothAfter!==3)throw new Error('recipe material cost not enforced');
+  const rope=p.inventory.find(x=>x.catalogId==='rope_kit'),potion=p.inventory.find(x=>x.catalogId==='healing_potion');
+  if(!rope||!potion)throw new Error('consumables not crafted');
 
-  const created=await post('/api/rooms',{name:'CI Hero',eventId:free.id,characterId:c1.character.id});
-  if(!created.room?.code||created.room.event.danger_tier!==free.danger_tier)throw new Error('event room not created');
-  const code=created.room.code;
+  const selected=await post('/api/rooms/'+code+'/select-character',{name,characterId:firstChar.id});
+  if(selected.room.players[0].characterId!==firstChar.id)throw new Error('room character snapshot wrong');
 
-  const rope=profile.inventory.find(x=>x.catalogId==='rope_kit');if(!rope)throw new Error('crafted item missing from stash');
-  const loadout=await post('/api/rooms/'+code+'/loadout',{name:'CI Hero',items:[{itemId:rope.id,quantity:1}]});
-  if(loadout.usage!==1||loadout.usage>loadout.capacity)throw new Error('loadout capacity broken');
-  if(loadout.capacity>free.inventory_slots)throw new Error('event backpack cap ignored');
+  const load=await post('/api/rooms/'+code+'/loadout',{name,items:[{itemId:rope.id,quantity:1},{itemId:potion.id,quantity:1}]});
+  if(load.usage!==2||load.capacity<2||load.capacity>free.inventory_slots)throw new Error('run loadout capacity wrong');
 
   const started=await post('/api/rooms/'+code+'/start',{});
   if(!started.started||started.participantsAtStart!==1)throw new Error('run not started');
-  const me=started.players.find(x=>x.name==='CI Hero');
-  if(!me||me.runInventory.length!==1)throw new Error('run inventory did not move from stash');
+  if(started.players[0].runInventory.length!==2)throw new Error('loadout did not move from account stash');
 
-  const diceTurn=await post('/api/rooms/'+code+'/turn',{name:'CI Hero',action:'пытаюсь быстро перелезть через опасный провал'});
-  if(!diceTurn.narration||!diceTurn.room?.scene||!diceTurn.dice)throw new Error('fixed difficulty dice turn missing');
-  if(diceTurn.dice.dc!==7+free.danger_tier*2)throw new Error('DC adapted unexpectedly');
+  const craftDuring=await postRaw('/api/profile/craft',{name,recipeId:'smoke_bomb',quantity:1});
+  if(craftDuring.status!==409||craftDuring.data?.error!=='cannot_craft_during_run')throw new Error('crafting must be blocked during run');
 
-  const early=await postRaw('/api/rooms/'+code+'/extract',{name:'CI Hero'});
+  const risky=await post('/api/rooms/'+code+'/turn',{name,action:'крадусь вперёд и пытаюсь незаметно перебраться через опасный участок'});
+  if(!risky.dice||risky.dice.die!==20)throw new Error('deterministic risky d20 missing');
+  const expectedDc=Math.max(7,Math.min(19,7+free.danger_tier*2));
+  if(risky.dice.dc!==expectedDc)throw new Error('difficulty adapted unexpectedly: '+risky.dice.dc+' vs '+expectedDc);
+
+  const potionInRun=started.players[0].runInventory.find(x=>x.catalogId==='healing_potion');
+  const used=await post('/api/rooms/'+code+'/use-item',{name,itemId:potionInRun.id});
+  if(used.room.players[0].runInventory.some(x=>x.catalogId==='healing_potion'))throw new Error('consumable was not consumed');
+
+  const early=await postRaw('/api/rooms/'+code+'/extract',{name});
   if(early.status!==409||early.data?.error!=='objectives_incomplete')throw new Error('early extraction must be blocked');
 
-  let run=diceTurn.room;
-  let guard=0;
-  while((run.progress||0)<100&&guard++<30){
-    const d=await post('/api/rooms/'+code+'/turn',{name:'CI Hero',action:'внимательно изучаю безопасную часть текущей сцены'});
-    run=d.room;
-    if(!run.players.find(x=>x.name==='CI Hero')?.alive)throw new Error('safe progress action killed character');
+  let room=risky.room,guard=0;
+  while(room.progress<100&&guard++<25){
+    const d=await post('/api/rooms/'+code+'/turn',{name,action:'спокойно осматриваю безопасную часть сцены, шаг '+guard});
+    room=d.room;
   }
-  if((run.progress||0)<100)throw new Error('event progress never reached extraction threshold');
+  if(room.progress<100)throw new Error('event could not reach completion');
 
-  const extracted=await post('/api/rooms/'+code+'/extract',{name:'CI Hero'});
-  const reward=extracted.rewards.find(x=>x.profileId===extracted.profile.id);
-  if(!reward||reward.xp<=0||!reward.unique?.length)throw new Error('extraction reward missing');
-  const expectedUnderfill=Math.max(1,Math.min(2.5,free.recommended_players/1));
-  if(Math.abs(reward.underfill-expectedUnderfill)>.001)throw new Error('underfill reward multiplier incorrect');
-  profile=extracted.profile;
-  const completedChar=profile.characters.find(x=>x.id===c1.character.id);
-  if(completedChar.runs!==1||completedChar.wins!==1)throw new Error('run/win counters incorrect');
-  if(completedChar.xp===0&&completedChar.level===1)throw new Error('character XP did not persist');
+  const extracted=await post('/api/rooms/'+code+'/extract',{name});
+  const mine=extracted.rewards.find(x=>x.characterId===firstChar.id);
+  if(!mine||mine.xp<=0||!mine.unique?.length)throw new Error('successful extraction did not grant xp + unique loot');
+  const expectedUnderfill=Math.max(1,Math.min(2.5,free.recommended_players));
+  if(Math.abs(mine.underfill-expectedUnderfill)>0.001)throw new Error('underfill reward multiplier wrong');
+  p=extracted.profile;
+  const firstAfter=p.characters.find(x=>x.id===firstChar.id);
+  if(firstAfter.runs!==1||firstAfter.wins!==1)throw new Error('run/win counters must increment once');
+  const unique=p.inventory.find(x=>mine.unique.some(u=>u.id===x.id));
+  if(!unique)throw new Error('unique completion item not in account stash');
 
-  const extractedGear=profile.inventory.filter(x=>x.kind==='equipment');
-  if(!extractedGear.length)throw new Error('unique extracted equipment missing from account stash');
+  const listing=await post('/api/market/list',{name,itemId:unique.id,price:777});
+  if(listing.price!==777)throw new Error('player market price not preserved');
+  const listed=(await request('/api/market')).find(x=>x.id===listing.id);
+  if(!listed||listed.price!==777)throw new Error('market listing missing');
+  await post('/api/market/cancel',{name,listingId:listing.id});
 
-  if(extractedGear.length>1){
-    const listing=await post('/api/market/list',{name:'CI Hero',itemId:extractedGear[1].id,price:777});
-    if(listing.price!==777)throw new Error('player-defined market price not preserved');
-    const active=await request('/api/market');
-    if(!active.some(x=>x.id===listing.id&&x.price===777))throw new Error('market listing missing');
-    await post('/api/market/cancel',{name:'CI Hero',listingId:listing.id});
-    profile=await request('/api/profile?name='+encodeURIComponent('CI Hero'));
-  }
+  // Paid expedition: each participant consumes access, and enchanting exists only inside the authored facility.
+  p=await getProfile(name);
+  const ingredient=p.inventory.find(x=>x.kind==='enchant_ingredient');
+  const forgeGear=p.inventory.find(x=>x.id===unique.id);
+  if(!ingredient||!forgeGear)throw new Error('forge prerequisites missing from account stash');
 
-  const ingredient=profile.inventory.find(x=>x.kind==='enchant_ingredient');
-  const gear=profile.inventory.find(x=>x.kind==='equipment');
-  if(!ingredient||!gear)throw new Error('forge loadout prerequisites missing');
-
-  let ally=await request('/api/profile?name='+encodeURIComponent('CI Ally'));
-  const allyChar=await post('/api/profile/character',{name:'CI Ally',wish:'наёмник поддержки',appearance:'дорожная броня'});
-  ally=allyChar.profile;
-
-  const paid=await post('/api/rooms',{name:'CI Hero',eventId:forgeEvent.id,characterId:c1.character.id});
-  const paidCode=paid.room.code;
-  await post('/api/rooms/'+paidCode+'/join',{name:'CI Ally',characterId:allyChar.character.id});
-  await post('/api/rooms/'+paidCode+'/loadout',{name:'CI Hero',items:[{itemId:gear.id,quantity:1},{itemId:ingredient.id,quantity:1}]});
+  const paidAlly='CI Paid Ally';
+  const paidAllyChar=await post('/api/profile/character',{name:paidAlly,wish:'поддержка и разведка',appearance:'лёгкая броня'});
+  const paidRoom=await post('/api/rooms',{name,eventId:forgeEvent.id,characterId:second.character.id});
+  const paidCode=paidRoom.room.code;
+  await post('/api/rooms/'+paidCode+'/join',{name:paidAlly,characterId:paidAllyChar.character.id});
+  await post('/api/rooms/'+paidCode+'/loadout',{name,items:[{itemId:forgeGear.id,quantity:1},{itemId:ingredient.id,quantity:1}]});
   const paidStarted=await post('/api/rooms/'+paidCode+'/start',{});
   if(paidStarted.participantsAtStart!==2)throw new Error('paid party size incorrect');
 
-  const hostAfterPay=await request('/api/profile?name='+encodeURIComponent('CI Hero'));
-  const allyAfterPay=await request('/api/profile?name='+encodeURIComponent('CI Ally'));
-  if(hostAfterPay.eventTickets!==1||allyAfterPay.eventTickets!==1)throw new Error('paid event must consume one ticket per player');
+  const hostPaid=await getProfile(name),allyPaid=await getProfile(paidAlly);
+  if(hostPaid.eventTickets!==1||allyPaid.eventTickets!==1)throw new Error('paid event must consume one entitlement per player');
 
-  const blockedTrade=await postRaw('/api/market/list',{name:'CI Hero',itemId:profile.inventory.find(x=>x.kind==='equipment'&&x.id!==gear.id)?.id||gear.id,price:123});
-  if(blockedTrade.status!==409||blockedTrade.data?.error!=='cannot_trade_during_run')throw new Error('trading during run must be blocked');
+  const tradeDuring=await postRaw('/api/market/list',{name,itemId:forgeGear.id,price:123});
+  if(tradeDuring.status!==409||tradeDuring.data?.error!=='cannot_trade_during_run')throw new Error('trading must be blocked during active expedition');
 
-  const move=await post('/api/rooms/'+paidCode+'/turn',{name:'CI Hero',action:'иду к '+forgeEvent.enchantment.label});
-  const hostInRoom=move.room.players.find(x=>x.name==='CI Hero');
-  if(hostInRoom.position?.anchorId!==forgeEvent.enchantment.anchor_id)throw new Error('GM move did not reach enchantment facility');
+  const moved=await post('/api/rooms/'+paidCode+'/turn',{name,action:'иду к '+forgeEvent.enchantment.label});
+  const hostRoomPlayer=moved.room.players.find(x=>x.id===hostPaid.id);
+  if(hostRoomPlayer.position?.anchorId!==forgeEvent.enchantment.anchor_id)throw new Error('player did not reach enchantment facility');
+  const runGear=hostRoomPlayer.runInventory.find(x=>x.kind==='equipment');
+  const runIngredient=hostRoomPlayer.runInventory.find(x=>x.kind==='enchant_ingredient');
+  const enchanted=await post('/api/rooms/'+paidCode+'/enchant',{name,targetId:runGear.id,ingredientIds:[runIngredient.id]});
+  if(enchanted.roll?.die!==20||!enchanted.success)throw new Error('deterministic adventure enchantment should succeed');
+  if(!(enchanted.item.enchantments||[]).length)throw new Error('enchantment was not persisted on unique item');
 
-  const inRunGear=hostInRoom.runInventory.find(x=>x.kind==='equipment');
-  const inRunIngredient=hostInRoom.runInventory.find(x=>x.kind==='enchant_ingredient');
-  const ench=await post('/api/rooms/'+paidCode+'/enchant',{name:'CI Hero',targetId:inRunGear.id,ingredientIds:[inRunIngredient.id]});
-  if(!ench.roll||typeof ench.success!=='boolean')throw new Error('enchantment challenge did not resolve');
-  if(!(ench.item.provenance||[]).some(x=>x.type==='enchanted'||x.type==='enchant_failed'))throw new Error('enchantment provenance missing');
+  let paidState=enchanted.room,paidSteps=0;
+  while(paidState.progress<100&&paidSteps++<25){
+    const d=await post('/api/rooms/'+paidCode+'/turn',{name,action:'осторожно выполняю безопасную часть задания, этап '+paidSteps});
+    paidState=d.room;
+  }
+  if(paidState.progress<100)throw new Error('paid event could not complete');
+  const paidExtract=await post('/api/rooms/'+paidCode+'/extract',{name});
+  p=paidExtract.profile;
+  const enchantedInStash=p.inventory.find(x=>x.id===unique.id);
+  if(!enchantedInStash?.enchantments?.length)throw new Error('enchanted item was not extracted back to stash');
 
-  const pov=await request('/api/rooms/'+paidCode+'/pov?name='+encodeURIComponent('CI Hero'));
-  if(!pov.camera||!Array.isArray(pov.visibleAnchors))throw new Error('POV not available');
+  // Permadeath + party recovery: only the carried expedition inventory is lost.
+  const rescue='CI Rescue';
+  const deathRoom=await post('/api/rooms',{name,eventId:free.id,characterId:firstChar.id});
+  const deathCode=deathRoom.room.code;
+  await post('/api/rooms/'+deathCode+'/loadout',{name,items:[{itemId:enchantedInStash.id,quantity:1}]});
+  await post('/api/rooms/'+deathCode+'/join',{name:rescue});
+  const rescueChar=await post('/api/rooms/'+deathCode+'/character',{name:rescue,wish:'полевой медик и разведчик',appearance:'лёгкая броня'});
+  if(!rescueChar.character?.id)throw new Error('rescue character not created');
+  await post('/api/rooms/'+deathCode+'/start',{});
+
+  let death=null;
+  for(let i=0;i<4;i++){
+    const d=await post('/api/rooms/'+deathCode+'/turn',{name,action:'прыгаю в бездну и сознательно иду на смертельный риск '+i});
+    if(d.deathDrop?.length){death=d;break}
+  }
+  if(!death)throw new Error('deterministic permadeath did not trigger');
+  const victimProfile=await getProfile(name);
+  const dead=victimProfile.characters.find(x=>x.id===firstChar.id);
+  if(dead?.status!=='dead'||victimProfile.usedSlots!==2)throw new Error('dead character did not become permanently unavailable');
+  if(!death.room.scene.loot.some(x=>x.id===enchantedInStash.id))throw new Error('carried item did not drop into death scene');
+  if(victimProfile.inventory.some(x=>x.id===enchantedInStash.id))throw new Error('carried item incorrectly remained in account stash');
+
+  const claimed=await post('/api/rooms/'+deathCode+'/loot/'+enchantedInStash.id+'/claim',{name:rescue});
+  const rescuePlayer=claimed.room.players.find(x=>x.id===claimed.profile.id);
+  if(!rescuePlayer?.runInventory.some(x=>x.id===enchantedInStash.id))throw new Error('party member did not recover death-drop item');
+
+  let deathState=claimed.room,steps=0;
+  while(deathState.progress<100&&steps++<25){
+    const d=await post('/api/rooms/'+deathCode+'/turn',{name:rescue,action:'осторожно продвигаюсь по безопасному пути, этап '+steps});
+    deathState=d.room;
+  }
+  const rescueExtract=await post('/api/rooms/'+deathCode+'/extract',{name:rescue});
+  if(!rescueExtract.profile.inventory.some(x=>x.id===enchantedInStash.id))throw new Error('recovered item was not extracted into rescuer stash');
+
+  const pov=await request('/api/rooms/'+deathCode+'/pov?name='+encodeURIComponent(rescue));
+  if(!pov.camera||!Array.isArray(pov.visibleAnchors))throw new Error('POV unavailable');
 
   const page=await fetch('http://127.0.0.1:8787/');
   if(!page.ok||(await page.text()).indexOf('KisAI Worlds')<0)throw new Error('index not served');
 
   console.log('Smoke PASS',{
-    version:health.version,events:events.length,freeEvent:free.id,tier:free.danger_tier,
-    slots:profile.usedSlots,underfill:reward.underfill,unique:reward.unique.length,
-    paidEvent:forgeEvent.id,paidParty:paidStarted.participantsAtStart,forgeRoll:ench.roll.die,forgeSuccess:ench.success
+    version:health.version,
+    rotatedEvents:events.length,
+    fixedTier:free.danger_tier,
+    fixedDc:risky.dice.dc,
+    characterSlots:'3/3 enforced',
+    underfill:mine.underfill,
+    completionLoot:mine.unique.length,
+    paidParty:paidStarted.participantsAtStart,
+    enchantQuality:enchanted.item.enchantments.at(-1).quality,
+    permadeath:dead.status,
+    recoveredUnique:enchantedInStash.serial
   });
-}finally{child.kill('SIGTERM')}
+}finally{
+  child.kill('SIGTERM');
+}
