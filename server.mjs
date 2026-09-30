@@ -249,30 +249,42 @@ const rarityBudget={common:2,uncommon:3,rare:5,epic:7,relic:10,mythic:14};
 function fingerprint(c={}) {
   return crypto.createHash('sha1').update(JSON.stringify({archetype:c.archetype,skills:c.skills,abilities:c.abilities,weakness:c.weakness,concept:c.concept})).digest('hex').slice(0,12);
 }
-function rollRarity(state='explore') {
-  let x=Math.random();
-  const boost=['boss','discovery'].includes(state)?0.12:0;
-  x=Math.max(0,x-boost);
-  if(x<.01)return'mythic'; if(x<.04)return'relic'; if(x<.12)return'epic'; if(x<.30)return'rare'; if(x<.58)return'uncommon'; return'common';
+function rollRarity(state='explore',event=null){
+  let x=Math.random()-(Math.max(1,event?.danger_tier||1)-1)*.045;
+  if(['boss','discovery'].includes(state))x-=.08;
+  if(x<.015)return'mythic';if(x<.055)return'relic';if(x<.15)return'epic';if(x<.34)return'rare';if(x<.62)return'uncommon';return'common';
 }
-function createLoot(profile,state='explore') {
-  const c=profile.character||{archetype:'Странник',level:1,skills:{Ловкость:1,Воля:1}};
-  const rarity=rollRarity(state), budget=rarityBudget[rarity], level=clamp(Number(c.level)||1,1,50);
-  const skills=Object.entries(c.skills||{}).sort((a,b)=>b[1]-a[1]).slice(0,2).map(x=>x[0]);
-  const primary=skills[0]||'Воля';
-  const slot = /сил|страж/i.test(c.archetype||'')?'armor':/маг|аркан/i.test(c.archetype||'')?'charm':/лов|следопыт/i.test(c.archetype||'')?'weapon':(['weapon','armor','charm','tool'][Math.floor(Math.random()*4)]);
-  const nouns={weapon:['Клинок','Копьё','Резак'],armor:['Панцирь','Кираса','Плащ'],charm:['Печать','Талисман','Осколок'],tool:['Компас','Ключ','Фокус']};
-  const item={
-    id:id('item'),serial:`KW-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
-    name:`${nouns[slot][Math.floor(Math.random()*nouns[slot].length)]} ${c.archetype||'Странника'}`,slot,rarity,level,
-    power:Math.max(1,Math.floor((level+budget)*1.25)),affixes:[{stat:primary,value:Math.max(1,Math.ceil(budget/2))}],
-    passive:`Ситуативная синергия с навыком «${primary}».`, lore:`Уникальный предмет, возникший из пути героя ${profile.name}.`,
-    adaptiveFor:{name:profile.name,archetype:c.archetype||'Странник',level,dominantSkills:skills,buildFingerprint:fingerprint(c)},
-    visualPrompt:`Square premium dark-fantasy RPG inventory card, single ${slot} item, ${rarity} rarity, designed for ${c.archetype||'adventurer'}, inspired by skills ${skills.join(' and ')||primary}, isolated artifact, cinematic material detail, no text, no UI, no watermark`,visual:null,
-    provenance:[{at:now(),type:'found',owner:profile.id}],createdAt:now(),status:'owned',ownerId:profile.id
+function behaviorTags(room,profileId){
+  const text=(room?.log||[]).filter(x=>x.profileId===profileId).slice(0,12).map(x=>x.action).join(' ').toLowerCase(),tags=[];
+  if(/скрыт|тихо|тень|обход/.test(text))tags.push('скрытность');
+  if(/маг|заклин|ритуал|энерг/.test(text))tags.push('магия');
+  if(/удар|атак|меч|ближ/.test(text))tags.push('ближний бой');
+  if(/осмотр|след|ищ|развед/.test(text))tags.push('разведка');
+  if(/говор|убеж|обман|переговор/.test(text))tags.push('социальное');
+  return tags.length?tags:['адаптивность'];
+}
+function createLoot(profile,state='explore',event=null,tags=[]){
+  syncActiveCharacter(profile);
+  const c=profile.character||{id:'unknown',name:profile.name,archetype:'Странник',level:1,skills:{Ловкость:1,Воля:1}};
+  const rarity=rollRarity(state,event),budget=rarityBudget[rarity],level=clamp(Number(c.level)||1,1,50),skills=Object.entries(c.skills||{}).sort((x,y)=>y[1]-x[1]).slice(0,2).map(x=>x[0]),primary=skills[0]||'Воля';
+  const slot=/сил|страж/i.test(c.archetype||'')?'armor':/маг|аркан/i.test(c.archetype||'')?'charm':/лов|следопыт/i.test(c.archetype||'')?'weapon':['weapon','armor','charm','tool'][crypto.randomInt(0,4)];
+  const nouns={weapon:['Клинок','Копьё','Резак'],armor:['Панцирь','Кираса','Плащ'],charm:['Печать','Талисман','Осколок'],tool:['Компас','Ключ','Фокус']},style=tags[0]||'адаптивность';
+  return{
+    id:id('item'),serial:'KW-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomBytes(2).toString('hex').toUpperCase(),kind:'equipment',stackable:false,
+    name:nouns[slot][crypto.randomInt(0,nouns[slot].length)]+' · '+style,slot,rarity,level,eventTier:event?.danger_tier||1,
+    power:Math.max(1,Math.floor((level+(event?.danger_tier||1)*2+budget)*1.2)),affixes:[{stat:primary,value:Math.max(1,Math.ceil(budget/2))}],
+    passive:'Синергия: '+style+' / '+primary,lore:'Уникальный предмет, сформированный поведением '+(c.name||profile.name)+(event?' в событии «'+event.title+'»':'')+'.',
+    adaptiveFor:{characterId:c.id,name:c.name||profile.name,archetype:c.archetype,level,dominantSkills:skills,behaviorTags:tags},
+    enchantments:[],visualPrompt:'Square premium dark-fantasy RPG inventory card, '+slot+', '+rarity+', '+style+', no text, no UI, no watermark',visual:null,
+    provenance:[{at:now(),type:'found',owner:profile.id,eventId:event?.id||null,characterId:c.id}],createdAt:now(),status:'owned',ownerId:profile.id
   };
-  return item;
 }
+function randomMaterial(event){
+  const ids=Object.keys(crafting.materials).filter(k=>crafting.materials[k].kind!=='enchant_ingredient'||(event?.danger_tier||1)>=3);
+  if(!ids.length)return null;const catalogId=ids[crypto.randomInt(0,ids.length)],qty=(event?.danger_tier||1)>=4&&crypto.randomInt(0,2)?2:1;
+  return materialItem(catalogId,qty,'scene');
+}
+
 function fallbackCharacter(wish='',appearance='') {
   const t=normalize(wish);
   const archetype=/маг|разрез|простран|аркан/.test(t)?'Арканист':/щит|брон|танк|сила/.test(t)?'Страж':/лук|след|ловк|скрыт/.test(t)?'Следопыт':'Авантюрист';
@@ -321,22 +333,15 @@ async function ensureItemVisual(item){
   fs.writeFileSync(existing,bytes);item.visual={url:'/api/item-media/'+item.id+'.png',generated:true};saveState();return item.visual;
 }
 function sceneGeometryFor(scenario){
-  const id=scenario?.id||'default';
   const maps={
-    black_station:{width:38,depth:16,visibilityRadius:19,anchors:[
-      {id:'train_door',label:'Двери поезда',x:4,y:8,z:0},{id:'platform_lamp',label:'Мигающий фонарь',x:15,y:5,z:0},
-      {id:'station_sign',label:'Табличка ЧЁРНАЯ',x:24,y:7,z:0},{id:'service_door',label:'Служебная дверь',x:34,y:12,z:0}
-    ]},
-    ash_crown:{width:24,depth:20,visibilityRadius:16,anchors:[
-      {id:'tavern_table',label:'Стол с письмом',x:12,y:10,z:0},{id:'hearth',label:'Камин',x:4,y:5,z:0},
-      {id:'front_door',label:'Вход в трактир',x:21,y:16,z:0},{id:'stairs',label:'Лестница наверх',x:5,y:17,z:0}
-    ]},
-    red_orbit:{width:32,depth:18,visibilityRadius:17,anchors:[
-      {id:'airlock',label:'Стыковочный шлюз',x:3,y:9,z:0},{id:'main_corridor',label:'Главный коридор',x:13,y:9,z:0},
-      {id:'control_door',label:'Дверь центра управления',x:24,y:5,z:0},{id:'service_hatch',label:'Сервисный люк',x:27,y:14,z:0}
-    ]}
+    glass_maze:{width:28,depth:18,visibilityRadius:12,anchors:[{id:'entry_mirror',label:'Входная арка',x:3,y:9,z:0},{id:'split_gallery',label:'Раздвоенная галерея',x:12,y:6,z:0},{id:'mirror_core',label:'Сердце лабиринта',x:24,y:10,z:0}]},
+    black_station:{width:38,depth:16,visibilityRadius:19,anchors:[{id:'train_door',label:'Двери поезда',x:4,y:8,z:0},{id:'platform_lamp',label:'Мигающий фонарь',x:15,y:5,z:0},{id:'station_sign',label:'Табличка ЧЁРНАЯ',x:24,y:7,z:0},{id:'service_door',label:'Служебная дверь',x:34,y:12,z:0}]},
+    ash_crown:{width:30,depth:22,visibilityRadius:16,anchors:[{id:'tavern_table',label:'Стол с письмом',x:8,y:10,z:0},{id:'front_door',label:'Выход из трактира',x:15,y:18,z:0},{id:'ash_forge',label:'Пепельная кузница',x:27,y:7,z:0}]},
+    red_orbit:{width:32,depth:18,visibilityRadius:17,anchors:[{id:'airlock',label:'Стыковочный шлюз',x:3,y:9,z:0},{id:'main_corridor',label:'Главный коридор',x:13,y:9,z:0},{id:'control_door',label:'Центр управления',x:24,y:5,z:0},{id:'service_hatch',label:'Сервисный люк',x:27,y:14,z:0}]},
+    bone_foundry:{width:42,depth:24,visibilityRadius:16,anchors:[{id:'cage_lift',label:'Лифт-клеть',x:3,y:12,z:0},{id:'smelter',label:'Плавильный цех',x:17,y:9,z:0},{id:'bone_forge',label:'Кузница Белого Пламени',x:31,y:6,z:0},{id:'exit_shaft',label:'Выходная шахта',x:39,y:18,z:0}]},
+    drowned_cathedral:{width:48,depth:30,visibilityRadius:15,anchors:[{id:'sealed_door',label:'Каменная дверь',x:4,y:15,z:0},{id:'nave',label:'Затопленный неф',x:18,y:15,z:0},{id:'crypt',label:'Крипта',x:31,y:21,z:-3},{id:'deep_altar',label:'Алтарь Глубины',x:43,y:10,z:-5}]}
   };
-  return maps[id]||{width:24,depth:18,visibilityRadius:15,anchors:[{id:'center',label:'Центр сцены',x:12,y:9,z:0}]};
+  return maps[scenario?.id]||{width:24,depth:18,visibilityRadius:15,anchors:[{id:'center',label:'Центр сцены',x:12,y:9,z:0}]};
 }
 function createScene(scenario,narration){
   return {id:id('scene'),title:scenario?.title||'Сцена',narration:narration??scenario?.opening??'',music_state:'explore',intensity:.25,loot:[],geometry:sceneGeometryFor(scenario)};
