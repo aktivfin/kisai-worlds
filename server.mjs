@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { resolveAttack, resolveCheck, conditionLabel } from './core/combat.mjs';
+import { resolveAttack, resolveCheck, conditionLabel, effectiveArmor } from './core/combat.mjs';
 import { materializeCharacterCore, createNpcCombatant, balanceAbilityFantasy } from './core/character.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -567,17 +567,24 @@ function enchantItem(r,player,targetId,ingredientIds){
 }
 
 function getRoom(c){ return rooms.get(String(c||'').toUpperCase()); }
+function runDefenseView(player){
+  const c=materializeCharacterCore(player.character||player.profile?.character||{});
+  const equippedId=player.profile?.equipped?.armor;
+  const armor=(player.runInventory||[]).find(x=>x.id===equippedId)||(player.runInventory||[]).find(x=>x.kind==='equipment'&&x.slot==='armor')||null;
+  return{hp_current:c.combat?.hp_current??null,hp_max:c.combat?.hp_max??null,evasion:c.combat?.evasion??null,initiative:c.combat?.initiative??null,
+    armor:armor?{id:armor.id,name:armor.name,base:armor.baseArmor??armor.armor??0,effective:effectiveArmor(armor,'torso'),durability:armor.durability??100,condition:armor.condition||conditionLabel(armor.durability??100)}:null};
+}
 function roomView(r){
   return {code:r.code,scenario:r.scenario,event:r.scenario,hostId:r.hostId,started:r.started,completed:Boolean(r.completed),outcome:r.outcome||null,
     turnIndex:r.turnIndex,progress:r.progress||0,participantsAtStart:r.participantsAtStart||0,scene:r.scene,log:(r.log||[]).slice(0,20),
     players:[...r.players.values()].map(x=>({id:x.id,name:x.name,ready:x.ready,characterId:x.characterId,character:x.character||x.profile?.character||null,
-      alive:x.alive!==false,position:x.position,wounds:x.wounds||0,capacity:x.capacity||6,runUsage:inventoryUsage(x.runInventory||[]),
+      alive:x.alive!==false,position:x.position,wounds:x.wounds||0,defense:runDefenseView(x),capacity:x.capacity||6,runUsage:inventoryUsage(x.runInventory||[]),
       runInventory:x.runInventory||[],pendingLoadout:x.pendingLoadout||[]}))};
 }
 
 async function api(req,res,u){
   try{
-    if(req.method==='GET'&&u.pathname==='/api/health')return json(res,200,{ok:true,version:'0.7.0-extraction-core',llm:providerReady('llm'),stt:providerReady('stt'),tts:providerReady('tts')});
+    if(req.method==='GET'&&u.pathname==='/api/health')return json(res,200,{ok:true,version:'0.8.0-character-combat-core',llm:providerReady('llm'),stt:providerReady('stt'),tts:providerReady('tts')});
     if(req.method==='GET'&&(u.pathname==='/api/scenarios'||u.pathname==='/api/events'))return json(res,200,currentEvents());
     if(req.method==='GET'&&u.pathname==='/api/event-catalog')return json(res,200,scenarios);
     if(req.method==='GET'&&u.pathname==='/api/crafting')return json(res,200,crafting);
