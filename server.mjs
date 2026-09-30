@@ -136,7 +136,7 @@ function commitTurn(r,p,action,result){
     const item=createLoot(p,result.music_state,r.scenario,behaviorTags(r,p.id));tryAddRunItem(r,player,item);drops.push(item)
   }
   r.scene.narration=narration+(deathDrop.length?' Персонаж погибает, а всё взятое в поход остаётся в этой сцене.':'');
-  r.scene.music_state=deathDrop.length?'grief':result.music_state||'explore';r.scene.intensity=result.danger==='lethal'?.9:result.danger==='risky'?.65:.35;
+  r.scene.music_state=deathDrop.length?'grief':result.music_state||'explore';r.scene.intensity=result.danger==='lethal'?0.9:result.danger==='risky'?0.65:0.35;
   r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,action,narration:r.scene.narration,roll});
   const alive=[...r.players.values()].filter(x=>x.alive);if(alive.length)r.turnIndex=(r.turnIndex+1)%alive.length;
   if(!alive.length){r.completed=true;r.outcome='wipe';for(const item of r.scene.loot){item.status='lost'}r.scene.loot=[]}
@@ -188,7 +188,7 @@ function grantXp(character,amount){
   while(character.xp>=xpNeeded(character.level||1)&&(character.level||1)<50){character.xp-=xpNeeded(character.level||1);character.level=(character.level||1)+1;levels++}
   return levels;
 }
-function runCapacity(character){return clamp(6+Math.floor(((character?.level)||1)-1)/5,6,10)}
+function runCapacity(character){return clamp(6+Math.floor((((character?.level)||1)-1)/5),6,10)}
 function stackCost(item,quantity){return Math.max(1,Number(item.slotCost)||1)*Math.max(1,quantity??item.quantity??1)}
 function inventoryUsage(items){return (items||[]).reduce((n,x)=>n+stackCost(x),0)}
 function addToStash(p,item){
@@ -271,13 +271,6 @@ function findActiveRun(profileId){
   for(const room of rooms.values())if(room.started&&!room.completed&&room.players.has(profileId))return room;
   return null;
 }
-function useRunItem(room,player,itemId){
-  const item=(player.runInventory||[]).find(x=>x.id===itemId&&x.kind==='consumable');if(!item)throw new Error('consumable_not_found');
-  const effect=item.effect||{};consumeInventoryItem(player.runInventory,item.id,1);
-  if(effect.type==='heal_wound')player.wounds=Math.max(0,(player.wounds||0)-(Number(effect.value)||1));
-  if(['roll_bonus','traversal','escape'].includes(effect.type))player.nextRollBonus=Math.max(Number(player.nextRollBonus)||0,Number(effect.value)||1);
-  saveState();return{effect,wounds:player.wounds,nextRollBonus:player.nextRollBonus||0};
-}
 function enchantDefinition(item){const d=crafting.materials[item?.catalogId];return d?.kind==='enchant_ingredient'?d:null}
 function enchantRunItem(room,player,targetId,ingredientIds){
   const facility=room.scenario.enchantment;if(!facility)throw new Error('event_has_no_enchanting');
@@ -296,23 +289,6 @@ function enchantRunItem(room,player,targetId,ingredientIds){
     target.enchantments.push(ench);target.provenance.push({at:now(),type:'enchanted',eventId:room.scenario.id,facility:facility.label,quality,effects});
   }else target.provenance.push({at:now(),type:'enchant_failed',eventId:room.scenario.id,facility:facility.label});
   saveState();return{roll,item:target,success};
-}
-function finishRun(room){
-  if(room.completed)throw new Error('run_completed');if((room.progress||0)<100)throw new Error('objectives_incomplete');
-  const alive=[...room.players.values()].filter(x=>x.alive);if(!alive.length)throw new Error('party_wiped');
-  const party=Math.max(1,room.participantsAtStart||room.players.size),underfill=clamp((room.scenario.recommended_players||1)/party,1,2.5),rewards=[];
-  for(const pl of alive){
-    const p=ensureProfile(pl.name),c=p.characters.find(x=>x.id===pl.characterId);if(!c)continue;
-    for(const item of pl.runInventory||[]){item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'extracted',eventId:room.scenario.id,characterId:c.id});addToStash(p,item)}
-    pl.runInventory=[];
-    const guaranteed=Math.max(1,Math.min(3,1+Math.floor((underfill-1)*1.5))),unique=[];
-    for(let i=0;i<guaranteed;i++){const item=createLoot(p,'discovery',room.scenario,behaviorTags(room,p.id));item.provenance.push({at:now(),type:'completion_reward',underfill});addToStash(p,item);unique.push(item)}
-    const xp=Math.round((room.scenario.xp_base||100)*underfill),levels=grantXp(c,xp);c.runs=(c.runs||0)+1;c.wins=(c.wins||0)+1;
-    p.activeCharacterId=c.id;syncActiveCharacter(p);persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'event_complete',amount:0,eventId:room.scenario.id,xp,underfill});
-    rewards.push({profileId:p.id,characterId:c.id,xp,levels,underfill,unique});
-  }
-  for(const item of room.scene.loot||[]){item.status='lost';item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'left_behind',eventId:room.scenario.id})}
-  room.scene.loot=[];room.completed=true;room.outcome='success';room.completedAt=now();saveState();return rewards;
 }
 
 const rarities=['common','uncommon','rare','epic','relic','mythic'];
@@ -554,13 +530,13 @@ async function api(req,res,u){
       const p=ensureProfile(b.name);if(b.characterId){try{selectCharacter(p,b.characterId)}catch(e){return json(res,409,{error:e.message})}}
       const scene=createScene(event,event.opening||'');scene.music_state='lobby';
       const room={code:code(),scenario:event,hostId:p.id,started:false,completed:false,outcome:null,turnIndex:0,progress:0,participantsAtStart:0,players:new Map(),scene,log:[],createdAt:now()};
-      room.players.set(p.id,makeRoomPlayer(p,scene,0));rooms.set(room.code,room);return json(res,201,{room:roomView(room),profile:publicProfile(p),access:accessStatus(p,event)});
+      const hostPlayer=makeRoomPlayer(p,scene,0);hostPlayer.capacity=Math.min(hostPlayer.capacity,event.inventory_slots||hostPlayer.capacity);room.players.set(p.id,hostPlayer);rooms.set(room.code,room);return json(res,201,{room:roomView(room),profile:publicProfile(p),access:accessStatus(p,event)});
     }
     const join=u.pathname.match(/^\/api\/rooms\/([^/]+)\/join$/);
     if(req.method==='POST'&&join){
       const r=getRoom(join[1]);if(!r)return json(res,404,{error:'room_not_found'});if(r.started)return json(res,409,{error:'run_already_started'});if(r.players.size>=5)return json(res,409,{error:'party_full'});
       const b=await body(req),p=ensureProfile(b.name);if(b.characterId){try{selectCharacter(p,b.characterId)}catch(e){return json(res,409,{error:e.message})}}
-      r.players.set(p.id,makeRoomPlayer(p,r.scene,r.players.size));return json(res,200,{room:roomView(r),profile:publicProfile(p),access:accessStatus(p,r.scenario)});
+      const joinedPlayer=makeRoomPlayer(p,r.scene,r.players.size);joinedPlayer.capacity=Math.min(joinedPlayer.capacity,r.scenario.inventory_slots||joinedPlayer.capacity);r.players.set(p.id,joinedPlayer);return json(res,200,{room:roomView(r),profile:publicProfile(p),access:accessStatus(p,r.scenario)});
     }
     const roomGet=u.pathname.match(/^\/api\/rooms\/([^/]+)$/);
     if(req.method==='GET'&&roomGet){const r=getRoom(roomGet[1]);return r?json(res,200,roomView(r)):json(res,404,{error:'room_not_found'})}
@@ -571,7 +547,7 @@ async function api(req,res,u){
     if(req.method==='POST'&&roomChar){
       const r=getRoom(roomChar[1]);if(!r)return json(res,404,{error:'room_not_found'});if(r.started)return json(res,409,{error:'run_already_started'});
       const b=await body(req),p=ensureProfile(b.name);try{
-        const c=await createPersistentCharacter(p,b.wish,b.appearance),pl=r.players.get(p.id);if(pl)Object.assign(pl,{characterId:c.id,ready:true,alive:true,wounds:0,capacity:runCapacity(c)});
+        const c=await createPersistentCharacter(p,b.wish,b.appearance),pl=r.players.get(p.id);if(pl)Object.assign(pl,{characterId:c.id,ready:true,alive:true,wounds:0,capacity:Math.min(runCapacity(c),r.scenario.inventory_slots||runCapacity(c))});
         return json(res,200,{character:c,profile:publicProfile(p),room:roomView(r)});
       }catch(e){return json(res,409,{error:e.message})}
     }
@@ -580,7 +556,7 @@ async function api(req,res,u){
       const r=getRoom(selectRoomChar[1]);if(!r)return json(res,404,{error:'room_not_found'});if(r.started)return json(res,409,{error:'run_already_started'});
       const b=await body(req),p=ensureProfile(b.name);try{
         const c=selectCharacter(p,b.characterId),pl=r.players.get(p.id);if(!pl)return json(res,404,{error:'player_not_in_room'});
-        Object.assign(pl,{characterId:c.id,ready:true,alive:true,wounds:0,capacity:runCapacity(c),pendingLoadout:[]});return json(res,200,{room:roomView(r),profile:publicProfile(p)});
+        Object.assign(pl,{characterId:c.id,ready:true,alive:true,wounds:0,capacity:Math.min(runCapacity(c),r.scenario.inventory_slots||runCapacity(c)),pendingLoadout:[]});return json(res,200,{room:roomView(r),profile:publicProfile(p)});
       }catch(e){return json(res,409,{error:e.message})}
     }
     const loadout=u.pathname.match(/^\/api\/rooms\/([^/]+)\/loadout$/);
