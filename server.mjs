@@ -212,13 +212,14 @@ function materialItem(catalogId,quantity=1,status='scene'){
 }
 
 
-function rotationSeed(){return parseInt(crypto.createHash('sha1').update(new Date().toISOString().slice(0,10)).digest('hex').slice(0,8),16)}
+function rotationSlot(){return Math.floor(Date.now()/(6*60*60*1000))}
+function rotationSeed(){return parseInt(crypto.createHash('sha1').update(String(rotationSlot())).digest('hex').slice(0,8),16)}
 function currentEvents(){
   if(!scenarios.length)return[];
-  const seed=rotationSeed(),count=clamp(3+(seed%4),3,Math.min(9,scenarios.length)),start=seed%scenarios.length,out=[];
+  const seed=rotationSeed(),count=clamp(3+(seed%7),3,Math.min(9,scenarios.length)),start=seed%scenarios.length,out=[];
   for(let i=0;i<count;i++)out.push(scenarios[(start+i)%scenarios.length]);
   if(!out.some(x=>x.entry?.type==='free')){const free=scenarios.find(x=>x.entry?.type==='free');if(free)out[out.length-1]=free}
-  const expires=new Date();expires.setUTCHours(24,0,0,0);
+  const expires=new Date((rotationSlot()+1)*6*60*60*1000);
   return [...new Map(out.map(x=>[x.id,x])).values()].map(x=>({...x,players:'1–5 · рек. '+(x.recommended_players||1),rotation_expires_at:expires.toISOString()}));
 }
 function activeEvent(eventId){return currentEvents().find(x=>x.id===eventId)||null}
@@ -250,6 +251,7 @@ function craftForProfile(p,recipeId,quantity=1){
 function storeView(){
   return{currency:'USD',products:[
     {id:'subscription_monthly',type:'subscription',title:'KisAI Worlds Monthly',price_cents:1499},
+    {id:'event_ticket',type:'event_ticket',title:'Билет на платное приключение',price_cents:null,note:'Цена берётся из выбранного события'},
     {id:'character_slot',type:'character_slot',title:'Дополнительный слот персонажа',price_cents:799}
   ],note:'Prototype exposes entitlement gates; checkout provider is intentionally not implemented in this repository.'};
 }
@@ -400,7 +402,10 @@ function sceneGeometryFor(scenario){
     ash_crown:{width:30,depth:22,visibilityRadius:16,anchors:[{id:'tavern_table',label:'Стол с письмом',x:8,y:10,z:0},{id:'front_door',label:'Выход из трактира',x:15,y:18,z:0},{id:'ash_forge',label:'Пепельная кузница',x:27,y:7,z:0}]},
     red_orbit:{width:32,depth:18,visibilityRadius:17,anchors:[{id:'airlock',label:'Стыковочный шлюз',x:3,y:9,z:0},{id:'main_corridor',label:'Главный коридор',x:13,y:9,z:0},{id:'control_door',label:'Центр управления',x:24,y:5,z:0},{id:'service_hatch',label:'Сервисный люк',x:27,y:14,z:0}]},
     bone_foundry:{width:42,depth:24,visibilityRadius:16,anchors:[{id:'cage_lift',label:'Лифт-клеть',x:3,y:12,z:0},{id:'smelter',label:'Плавильный цех',x:17,y:9,z:0},{id:'bone_forge',label:'Кузница Белого Пламени',x:31,y:6,z:0},{id:'exit_shaft',label:'Выходная шахта',x:39,y:18,z:0}]},
-    drowned_cathedral:{width:48,depth:30,visibilityRadius:15,anchors:[{id:'sealed_door',label:'Каменная дверь',x:4,y:15,z:0},{id:'nave',label:'Затопленный неф',x:18,y:15,z:0},{id:'crypt',label:'Крипта',x:31,y:21,z:-3},{id:'deep_altar',label:'Алтарь Глубины',x:43,y:10,z:-5}]}
+    drowned_cathedral:{width:48,depth:30,visibilityRadius:15,anchors:[{id:'sealed_door',label:'Каменная дверь',x:4,y:15,z:0},{id:'nave',label:'Затопленный неф',x:18,y:15,z:0},{id:'crypt',label:'Крипта',x:31,y:21,z:-3},{id:'deep_altar',label:'Алтарь Глубины',x:43,y:10,z:-5}]},
+    ember_archive:{width:32,depth:18,visibilityRadius:14,anchors:[{id:'elevator',label:'Лифт −1',x:3,y:9,z:0},{id:'stacks',label:'Горячие стеллажи',x:15,y:8,z:0},{id:'night_book',label:'Книга текущей ночи',x:28,y:12,z:0}]},
+    iron_rain:{width:50,depth:26,visibilityRadius:18,anchors:[{id:'valley_edge',label:'Край долины',x:3,y:13,z:0},{id:'storm_field',label:'Поле железного дождя',x:20,y:13,z:0},{id:'tower',label:'Старая башня',x:34,y:18,z:0},{id:'storm_anvil',label:'Грозовая наковальня',x:46,y:8,z:0}]},
+    null_garden:{width:52,depth:34,visibilityRadius:16,anchors:[{id:'airlock',label:'Гермодверь',x:4,y:17,z:0},{id:'white_tree',label:'Белое дерево',x:25,y:17,z:0},{id:'fracture',label:'Разлом физики',x:37,y:24,z:-2},{id:'zero_font',label:'Источник Нуля',x:48,y:9,z:-4}]}
   };
   return maps[scenario?.id]||{width:24,depth:18,visibilityRadius:15,anchors:[{id:'center',label:'Центр сцены',x:12,y:9,z:0}]};
 }
