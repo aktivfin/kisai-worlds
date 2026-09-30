@@ -1,5 +1,26 @@
 # Project status
 
+## Visual implementation 0.7
+
+The generated concept direction is now represented by a real interactive UI layer rather than baked screenshots:
+
+- cinematic dark-blue / amber design tokens and top HUD;
+- interactive world-event map with positioned event nodes;
+- selected-event detail rail with fixed difficulty, entry, duration and reward metadata;
+- six-hour rotation countdown;
+- responsive card fallback for smaller screens;
+- expedition lobby with living-character roster and limited at-risk backpack;
+- gameplay HUD with progress, server d20 result, voice dock, scene loot and extraction state;
+- account economy/crafting/market screens aligned to the same component system;
+- graceful media fallbacks until the real cinematic asset pack is committed.
+
+Source validation for this UI pass:
+- `npm run check` — PASS;
+- `npm run validate:ui` — PASS;
+- `npm run test:smoke` — PASS.
+
+The separate Required media CI job is still intentionally blocked by the missing production JPG/MP3 files.
+
 Current baseline: **KisAI Worlds extraction-RPG prototype 0.7.0**.
 
 ## Current gameplay core
