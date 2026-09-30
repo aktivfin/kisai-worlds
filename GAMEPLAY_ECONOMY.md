@@ -252,3 +252,108 @@ Still production work:
 - continuous party voice;
 - anti-cheat/abuse/market concurrency hardening;
 - production deployment/observability/backups.
+
+
+## 15. Classless Character & Combat Core 0.1
+
+Characters have no fixed classes, races or mandatory skill trees. The player's fantasy is free-form; the server owns mechanical power.
+
+### Attributes
+
+Every character has six universal attributes in the working range -3..+4:
+- Strength
+- Agility
+- Endurance
+- Perception
+- Intelligence
+- Charisma
+
+Non-combat checks use:
+`d20 + attribute + matching dynamic skill + explicit server bonus >= DC`
+
+The Intent Interpreter chooses semantic relevance from the way the player acts, not from a single keyword. A threat may therefore resolve through Charisma + Intimidation or Strength + Intimidation depending on the described method.
+
+### Dynamic skills
+
+Skills are not a fixed global list. CharacterState keeps `dynamicSkills` plus a server-side practice ledger. Repeated relevant actions can create a new skill; further practice may rank it up, with the maximum rank gated by character level.
+
+### Combat values
+
+The deterministic combat layer stores:
+- `hp_current / hp_max`
+- `evasion`
+- `initiative`
+- optional resources
+- injuries
+
+Hit resolution:
+`d20 + accuracy >= target evasion`
+
+Natural 20 hits automatically. Natural 1 misses automatically.
+
+Armor is separate from evasion:
+`hpDamage = max(minDamage, rawDamage - effectiveArmor)`
+
+Weak attacks may deal 0 HP damage while still wearing the armor.
+
+### Targeted attacks
+
+A player may name a body/equipment area. The Rules Engine raises the target evasion according to precision difficulty. A damaged breach can reduce local armor, producing the trade-off:
+harder to hit -> potentially better penetration.
+
+Narrative declarations such as "I cut off his head" never guarantee the result. The final description is produced only after hit, damage, armor, remaining HP, injury and death state are known.
+
+### Durability and local defects
+
+Equipment stores physical state:
+- durability 0..100
+- condition category
+- material
+- local damage / defects
+
+Condition bands:
+- 80–100 intact
+- 60–79 worn
+- 40–59 damaged
+- 20–39 badly damaged
+- 1–19 critical
+- 0 destroyed
+
+Effective armor scales down with durability. Local cuts/breaches can reduce protection further. Wear depends on damage type and material rather than a fixed "per hit" subtraction.
+
+Weapons use the same physical-state model. Hard impacts against armor wear weapons more strongly than soft targets.
+
+### AbilityDefinition and level budget
+
+A player may name an ability however they want. The server converts the fantasy into an `AbilityDefinition` containing supported mechanics such as damage die, range, targets, damage type, accuracy, cooldown/control and costs.
+
+At level 1, even extreme names such as "destroy reality" remain inside the level-1 budget. The name never grants mechanical power.
+
+Level-ups grant development points. Outside an active expedition the player may spend one development point to:
+- modify an existing ability while preserving its identity/history; or
+- create a new ability if the level-based ability-slot cap allows it.
+
+The client sends the player's idea; `AbilityBalanceEngine` owns final numbers.
+
+### Four-stage authoritative pipeline
+
+`PLAYER INTENT -> Intent Interpreter -> Rules Engine -> World Simulator -> Narrative Engine`
+
+The LLM may interpret intent and later narrate facts. It cannot invent or override dice, DC, hit/miss, damage, armor, durability, HP, injuries, death, ownership or economy state.
+
+### Runtime combat exchange
+
+Canonical scenes contain hostile combatants with their own CharacterState-like combat state and equipment.
+
+A player attack:
+1. selects target / target area / ability;
+2. resolves d20 + accuracy vs evasion;
+3. rolls server damage;
+4. resolves local effective armor;
+5. applies HP damage;
+6. applies armor and weapon wear;
+7. creates injuries when mechanically justified;
+8. updates canonical combatant state;
+9. generates narration from the committed result.
+
+If the target survives, it may resolve a counterattack through the same deterministic resolver against the player's HP/evasion/carried armor. If player HP reaches zero, existing permadeath and expedition death-drop rules apply.
