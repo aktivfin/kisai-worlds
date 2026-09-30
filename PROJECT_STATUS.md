@@ -23,6 +23,20 @@ The separate Required media CI job is still intentionally blocked by the missing
 
 Current baseline: **KisAI Worlds extraction-RPG prototype 0.7.0**.
 
+## UX hardening 0.7.2
+
+Additional client hardening completed:
+- truthful push-to-talk states instead of claiming continuous party voice;
+- server-provided bounded action log in the gameplay rail;
+- connection/offline indicator and non-toast offline banner;
+- live expedition backpack capacity preview with over-cap blocking;
+- working KAI wallet shortcut;
+- real character confirmation action instead of a toast-only fake button;
+- working inventory rarity/equipped filters and market search;
+- richer unique-item inspector with serial, adaptive origin, enchantments and provenance;
+- crafting ingredient owned/required counts;
+- restrained main-menu preview motion with reduced-motion support.
+
 ## Current gameplay core
 
 The game is now structured around paid / subscription-backed AI expeditions rather than a generic RPG lobby.
