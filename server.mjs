@@ -159,7 +159,7 @@ function syncActiveCharacter(p){
 }
 function migrateProfile(p){
   p.characterSlots=Number(p.characterSlots)||3;p.eventTickets=Number.isFinite(p.eventTickets)?p.eventTickets:2;p.subscription=p.subscription||{active:false,expiresAt:null};
-  p.inventory=Array.isArray(p.inventory)?p.inventory:[];p.characters=Array.isArray(p.characters)?p.characters:[];
+  p.inventory=Array.isArray(p.inventory)?p.inventory:[];p.characters=Array.isArray(p.characters)?p.characters:[];p.equipped=p.equipped||{weapon:null,armor:null,charm:null,tool:null};
   if(p.character&&p.characters.length===0){
     const old={...p.character,id:p.character.id||id('char'),status:p.alive===false?'dead':'alive',xp:Number(p.character.xp)||0,level:Number(p.character.level)||1,createdAt:now(),runs:0,wins:0};
     p.characters.push(old);if(old.status==='alive')p.activeCharacterId=old.id;
@@ -169,7 +169,7 @@ function migrateProfile(p){
 function ensureProfile(name='Игрок') {
   const key=normalize(name)||'player';
   if(!persisted.profiles[key]){
-    persisted.profiles[key]={id:id('profile'),name:String(name).trim()||'Игрок',balance:120,farmToday:0,farmDay:new Date().toISOString().slice(0,10),inventory:starterInventory(),recentActions:[],characterSlots:3,characters:[],activeCharacterId:null,eventTickets:2,subscription:{active:false,expiresAt:null}};
+    persisted.profiles[key]={id:id('profile'),name:String(name).trim()||'Игрок',balance:120,farmToday:0,farmDay:new Date().toISOString().slice(0,10),inventory:starterInventory(),equipped:{weapon:null,armor:null,charm:null,tool:null},recentActions:[],characterSlots:3,characters:[],activeCharacterId:null,eventTickets:2,subscription:{active:false,expiresAt:null}};
     saveState();
   }
   const p=migrateProfile(persisted.profiles[key]),day=new Date().toISOString().slice(0,10);
@@ -254,6 +254,67 @@ function storeView(){
   ],note:'Prototype exposes entitlement gates; checkout provider is intentionally not implemented in this repository.'};
 }
 
+
+async function createCharacterForProfile(p,wish,appearance){
+  if(p.characters.filter(x=>x.status==='alive').length>=p.characterSlots)throw new Error('character_slots_full');
+  let character=null,ai=false;
+  try{character=await generateCharacterAI(wish,appearance);ai=Boolean(character)}catch(e){console.warn('character AI fallback:',e.message)}
+  character=character||fallbackCharacter(wish,appearance);
+  if(!character.id)character.id=id('char');character.status='alive';character.xp=Number(character.xp)||0;character.level=Number(character.level)||1;character.runs=Number(character.runs)||0;character.wins=Number(character.wins)||0;character.createdAt=character.createdAt||now();
+  p.characters.push(character);p.activeCharacterId=character.id;syncActiveCharacter(p);saveState();return{character,ai};
+}
+function attachCharacterToRoom(room,p,character){
+  const pl=room.players.get(p.id);if(!pl)throw new Error('player_not_in_room');
+  pl.characterId=character.id;pl.character=character;pl.ready=true;pl.alive=true;pl.wounds=0;pl.nextRollBonus=0;pl.capacity=Math.min(room.scenario.inventory_slots||runCapacity(character),runCapacity(character));pl.pendingLoadout=[];pl.runInventory=[];
+}
+function findActiveRun(profileId){
+  for(const room of rooms.values())if(room.started&&!room.completed&&room.players.has(profileId))return room;
+  return null;
+}
+function useRunItem(room,player,itemId){
+  const item=(player.runInventory||[]).find(x=>x.id===itemId&&x.kind==='consumable');if(!item)throw new Error('consumable_not_found');
+  const effect=item.effect||{};consumeInventoryItem(player.runInventory,item.id,1);
+  if(effect.type==='heal_wound')player.wounds=Math.max(0,(player.wounds||0)-(Number(effect.value)||1));
+  if(['roll_bonus','traversal','escape'].includes(effect.type))player.nextRollBonus=Math.max(Number(player.nextRollBonus)||0,Number(effect.value)||1);
+  saveState();return{effect,wounds:player.wounds,nextRollBonus:player.nextRollBonus||0};
+}
+function enchantDefinition(item){const d=crafting.materials[item?.catalogId];return d?.kind==='enchant_ingredient'?d:null}
+function enchantRunItem(room,player,targetId,ingredientIds){
+  const facility=room.scenario.enchantment;if(!facility)throw new Error('event_has_no_enchanting');
+  if(player.position?.anchorId!==facility.anchor_id)throw new Error('not_at_enchantment_facility');
+  const target=(player.runInventory||[]).find(x=>x.id===targetId&&x.kind==='equipment');if(!target)throw new Error('equipment_not_in_run_inventory');
+  const ids=[...new Set((ingredientIds||[]).map(String))];if(!ids.length||ids.length>facility.max_ingredients)throw new Error('invalid_ingredients');
+  const picked=ids.map(x=>{const item=player.runInventory.find(i=>i.id===x),def=enchantDefinition(item);if(!def)throw new Error('invalid_enchant_ingredient');return{item,def}});
+  for(const x of picked)consumeInventoryItem(player.runInventory,x.item.id,1);
+  const skill=Math.max(Number(player.character?.skills?.Интеллект)||2,Number(player.character?.skills?.Воля)||2);
+  const die=crypto.randomInt(1,21),modifier=skill-2+Math.floor(((player.character?.level)||1)-1)/5,success=die===20||(die!==1&&die+modifier>=facility.challenge_dc);
+  const roll={die,skill:'Интеллект/Воля',modifier,dc:facility.challenge_dc,total:die+modifier,success,critical:die===20,criticalFail:die===1};
+  target.enchantments=target.enchantments||[];target.provenance=target.provenance||[];
+  if(success){
+    const quality=clamp(facility.tier+(roll.critical?1:0),1,5),effects=picked.map(x=>({key:x.def.enchant.key,label:x.def.enchant.label,value:x.def.enchant.base_value*quality}));
+    const ench={id:id('ench'),at:now(),eventId:room.scenario.id,facility:facility.label,forgeTier:facility.tier,quality,effects};
+    target.enchantments.push(ench);target.provenance.push({at:now(),type:'enchanted',eventId:room.scenario.id,facility:facility.label,quality,effects});
+  }else target.provenance.push({at:now(),type:'enchant_failed',eventId:room.scenario.id,facility:facility.label});
+  saveState();return{roll,item:target,success};
+}
+function finishRun(room){
+  if(room.completed)throw new Error('run_completed');if((room.progress||0)<100)throw new Error('objectives_incomplete');
+  const alive=[...room.players.values()].filter(x=>x.alive);if(!alive.length)throw new Error('party_wiped');
+  const party=Math.max(1,room.participantsAtStart||room.players.size),underfill=clamp((room.scenario.recommended_players||1)/party,1,2.5),rewards=[];
+  for(const pl of alive){
+    const p=ensureProfile(pl.name),c=p.characters.find(x=>x.id===pl.characterId);if(!c)continue;
+    for(const item of pl.runInventory||[]){item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'extracted',eventId:room.scenario.id,characterId:c.id});addToStash(p,item)}
+    pl.runInventory=[];
+    const guaranteed=Math.max(1,Math.min(3,1+Math.floor((underfill-1)*1.5))),unique=[];
+    for(let i=0;i<guaranteed;i++){const item=createLoot(p,'discovery',room.scenario,behaviorTags(room,p.id));item.provenance.push({at:now(),type:'completion_reward',underfill});addToStash(p,item);unique.push(item)}
+    const xp=Math.round((room.scenario.xp_base||100)*underfill),levels=grantXp(c,xp);c.runs=(c.runs||0)+1;c.wins=(c.wins||0)+1;
+    p.activeCharacterId=c.id;syncActiveCharacter(p);persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'event_complete',amount:0,eventId:room.scenario.id,xp,underfill});
+    rewards.push({profileId:p.id,characterId:c.id,xp,levels,underfill,unique});
+  }
+  for(const item of room.scene.loot||[]){item.status='lost';item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'left_behind',eventId:room.scenario.id})}
+  room.scene.loot=[];room.completed=true;room.outcome='success';room.completedAt=now();saveState();return rewards;
+}
+
 const rarities=['common','uncommon','rare','epic','relic','mythic'];
 const rarityBudget={common:2,uncommon:3,rare:5,epic:7,relic:10,mythic:14};
 function fingerprint(c={}) {
@@ -302,7 +363,7 @@ function fallbackCharacter(wish='',appearance='') {
   if(archetype==='Арканист'){skills.Интеллект=4;skills.Воля=3}
   if(archetype==='Страж'){skills.Сила=4;skills.Воля=3}
   if(archetype==='Следопыт'){skills.Ловкость=4;skills.Восприятие=3}
-  return {name:'Герой',archetype,level:1,concept:wish||'Искатель приключений',appearance,skills,abilities:['Основной приём','Ситуативная способность'],weakness:'Ограниченный ресурс сильных приёмов'};
+  return {id:id('char'),name:'Герой',archetype,level:1,xp:0,status:'alive',runs:0,wins:0,createdAt:now(),concept:wish||'Искатель приключений',appearance,skills,abilities:['Основной приём','Ситуативная способность'],weakness:'Ограниченный ресурс сильных приёмов'};
 }
 function classifyMusic(text='') {
   const t=normalize(text);
