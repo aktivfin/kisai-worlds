@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveAttack, resolveCheck, conditionLabel, effectiveArmor } from './core/combat.mjs';
-import { materializeCharacterCore, createNpcCombatant, balanceAbilityFantasy, recordSkillUse } from './core/character.mjs';
+import { materializeCharacterCore, createNpcCombatant, balanceAbilityFantasy, recordSkillUse, evolveAbilityDefinition } from './core/character.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(__dirname, 'data');
@@ -268,8 +268,9 @@ function publicProfile(p){
 }
 function xpNeeded(level){return 100+Math.max(0,level-1)*80}
 function grantXp(character,amount){
-  character.xp=(character.xp||0)+Math.max(0,Math.floor(amount));let levels=0;
+  materializeCharacterCore(character);character.xp=(character.xp||0)+Math.max(0,Math.floor(amount));let levels=0;
   while(character.xp>=xpNeeded(character.level||1)&&(character.level||1)<50){character.xp-=xpNeeded(character.level||1);character.level=(character.level||1)+1;levels++}
+  if(levels)character.developmentPoints=(Number(character.developmentPoints)||0)+levels;
   return levels;
 }
 function runCapacity(character){return clamp(6+Math.floor((((character?.level)||1)-1)/5),6,10)}
@@ -649,6 +650,11 @@ async function api(req,res,u){
     if(req.method==='POST'&&u.pathname==='/api/profile/craft'){
       const b=await body(req),p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'cannot_craft_during_run'});
       try{return json(res,200,{item:craftForProfile(p,b.recipeId,b.quantity),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
+    }
+    if(req.method==='POST'&&u.pathname==='/api/profile/ability-evolve'){
+      const b=await body(req),p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'cannot_evolve_during_run'});
+      const c=syncActiveCharacter(p);if(!c)return json(res,404,{error:'active_character_not_found'});if((Number(c.developmentPoints)||0)<1)return json(res,409,{error:'no_development_points'});
+      try{const ability=evolveAbilityDefinition(c,{abilityId:b.abilityId,idea:b.idea,mode:b.mode==='new'?'new':'modify'});c.developmentPoints--;saveState();return json(res,200,{ability,character:c,profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
     }
     if(req.method==='POST'&&u.pathname==='/api/profile/equip'){
       const b=await body(req),p=ensureProfile(b.name),item=p.inventory.find(x=>x.id===b.itemId&&x.kind==='equipment');if(!item)return json(res,404,{error:'equipment_not_found'});
