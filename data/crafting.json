@@ -1,0 +1,129 @@
+{
+  "materials": {
+    "herb": {
+      "name": "Горькая трава",
+      "slot_cost": 1,
+      "kind": "material"
+    },
+    "cloth": {
+      "name": "Плотная ткань",
+      "slot_cost": 1,
+      "kind": "material"
+    },
+    "crystal": {
+      "name": "Малый кристалл",
+      "slot_cost": 1,
+      "kind": "material"
+    },
+    "ember_salt": {
+      "name": "Пепельная соль",
+      "slot_cost": 1,
+      "kind": "enchant_ingredient",
+      "enchant": {
+        "key": "fire",
+        "label": "Пламя",
+        "base_value": 2
+      }
+    },
+    "frost_heart": {
+      "name": "Сердце инея",
+      "slot_cost": 1,
+      "kind": "enchant_ingredient",
+      "enchant": {
+        "key": "frost",
+        "label": "Холод",
+        "base_value": 2
+      }
+    },
+    "grave_dust": {
+      "name": "Могильная пыль",
+      "slot_cost": 1,
+      "kind": "enchant_ingredient",
+      "enchant": {
+        "key": "drain",
+        "label": "Истощение",
+        "base_value": 1
+      }
+    },
+    "storm_glass": {
+      "name": "Грозовое стекло",
+      "slot_cost": 1,
+      "kind": "enchant_ingredient",
+      "enchant": {
+        "key": "shock",
+        "label": "Разряд",
+        "base_value": 2
+      }
+    }
+  },
+  "recipes": [
+    {
+      "id": "healing_potion",
+      "name": "Лечебное зелье",
+      "output": {
+        "kind": "consumable",
+        "name": "Лечебное зелье",
+        "effect": {
+          "type": "heal_wound",
+          "value": 1
+        },
+        "slot_cost": 1
+      },
+      "cost": {
+        "herb": 2,
+        "crystal": 1
+      }
+    },
+    {
+      "id": "rope_kit",
+      "name": "Верёвочный комплект",
+      "output": {
+        "kind": "consumable",
+        "name": "Верёвочный комплект",
+        "effect": {
+          "type": "traversal",
+          "value": 1
+        },
+        "slot_cost": 1
+      },
+      "cost": {
+        "cloth": 3
+      }
+    },
+    {
+      "id": "smoke_bomb",
+      "name": "Дымовая бомба",
+      "output": {
+        "kind": "consumable",
+        "name": "Дымовая бомба",
+        "effect": {
+          "type": "escape",
+          "value": 1
+        },
+        "slot_cost": 1
+      },
+      "cost": {
+        "cloth": 1,
+        "crystal": 1
+      }
+    },
+    {
+      "id": "focus_tonic",
+      "name": "Тоник концентрации",
+      "output": {
+        "kind": "consumable",
+        "name": "Тоник концентрации",
+        "effect": {
+          "type": "roll_bonus",
+          "value": 2,
+          "uses": 1
+        },
+        "slot_cost": 1
+      },
+      "cost": {
+        "herb": 1,
+        "crystal": 2
+      }
+    }
+  ]
+}
