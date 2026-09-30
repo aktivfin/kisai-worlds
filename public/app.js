@@ -320,7 +320,16 @@ function econTab(name){
   if(name==='market')loadMarket();if(name==='craft')loadCrafting();
 }
 
+function setupMediaFallbacks(){
+  document.addEventListener('error',e=>{
+    if(e.target instanceof HTMLImageElement){
+      e.target.classList.add('mediaMissing');
+      e.target.closest('.worldCardArt,.sceneThumb,.itemVisualCard')?.classList.add('mediaFallback');
+    }
+  },true);
+}
 async function init(){
+  setupMediaFallbacks();
   $('#playerName').value=S.name;$('#joinName').value=S.name;
   if(S.name)await loadProfile();await loadEvents();startRotationClock();music('menu');
 
