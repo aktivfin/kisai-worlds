@@ -369,6 +369,8 @@ async function renderPOV(){
 function applyTurn(d){
   S.room=d.room;S.profile=d.profile;renderProfile();renderGame(d);
   if(d.deathDrop?.length)toast('Персонаж погиб. В сцене осталось '+d.deathDrop.length+' предметов.');
+  else if(d.skillGrowth?.type==='learned')toast('Новый навык: '+d.skillGrowth.skill.name+' +'+d.skillGrowth.skill.rank);
+  else if(d.skillGrowth?.type==='rank_up')toast('Навык вырос: '+d.skillGrowth.skill.name+' +'+d.skillGrowth.skill.rank);
   else if(d.transcript)toast('Распознано: '+d.transcript.slice(0,80));
   else if(d.drops?.length)toast('Найдено: '+d.drops.map(x=>x.name).join(', '));
   if(d.speechBase64){try{setVoiceState('GM отвечает…','speaking');const a=new Audio('data:'+(d.speechMime||'audio/mpeg')+';base64,'+d.speechBase64);duckMusic(true);a.onended=()=>{duckMusic(false);setVoiceState('Ожидание хода','idle')};a.onerror=()=>{duckMusic(false);setVoiceState('Ожидание хода','idle')};a.play().catch(()=>{duckMusic(false);setVoiceState('Ожидание хода','idle')})}catch{duckMusic(false);setVoiceState('Ожидание хода','idle')}}
