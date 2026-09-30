@@ -1,8 +1,8 @@
 {
   "name": "kisai-worlds-windows-demo",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
-  "description": "Voice-first multiplayer AI RPG prototype with cinematic menu transitions, integrated project cover art, Windows/Linux installers and adaptive economy",
+  "description": "AI extraction RPG prototype with rotating fixed-difficulty events, permadeath, limited expedition inventory, crafting, enchanting and player market",
   "scripts": {
     "start": "node server.mjs",
     "check": "node --check server.mjs && node --check public/app.js",
