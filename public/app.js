@@ -305,7 +305,7 @@ function renderGame(result=null){
   const progress=Math.round(r.progress||0);$('#runProgressText').textContent=progress+'%';$('#runProgressFill').style.width=progress+'%';$('#extractRun').disabled=progress<100||r.completed;$('#extractRun').textContent=r.completed?'Завершено':progress>=100?'Эвакуироваться':'Эвакуация '+progress+'%';
   $('#party').innerHTML=(r.players||[]).map((p,i)=>'<div class="partyMember '+(!p.alive?'dead':'')+'"><b>'+esc(p.name)+'</b><small>'+(p.character?esc(p.character.name||p.character.archetype)+' · '+p.wounds+'/3 раны':'Без героя')+'</small><span>'+(i===r.turnIndex?'ХОД':'')+'</span></div>').join('');
   const me=myRoomPlayer();
-  if($('#myStats'))$('#myStats').innerHTML=me?'<small>ТВОЙ ГЕРОЙ</small><b>'+esc(me.character?.name||me.character?.archetype||'—')+'</b><span>Раны '+me.wounds+'/3 · Рюкзак '+me.runUsage+'/'+me.capacity+'</span>':'';
+  if($('#myStats')){const c=me?.character||{},combat=c.combat||{},def=me?.defense||{},inj=(c.injuries||[]).length;$('#myStats').innerHTML=me?'<small>ТВОЙ ГЕРОЙ</small><b>'+esc(c.name||c.archetype||'—')+'</b><div class="heroCombatMini"><span>HP <b>'+(combat.hp_current??'—')+'/'+(combat.hp_max??'—')+'</b></span><span>EVA <b>'+(combat.evasion??'—')+'</b></span><span>ARM <b>'+(def.armor?.effective??0)+'</b></span></div><span>Травмы '+inj+' · Рюкзак '+me.runUsage+'/'+me.capacity+'</span>':''}
   const ctx=$('#sceneContext');if(ctx)ctx.innerHTML='<small>ТЕКУЩАЯ ПОЗИЦИЯ</small><b>'+esc(me?.position?.anchorId||'canonical scene')+'</b><span>'+esc(event?.genre||'Экспедиция')+' · опасность T'+(event?.danger_tier||1)+'</span>';
   renderRunInventory();
   renderThreats();
