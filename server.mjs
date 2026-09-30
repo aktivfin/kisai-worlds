@@ -497,7 +497,7 @@ function enchantItem(r,player,targetId,ingredientIds){
 function getRoom(c){ return rooms.get(String(c||'').toUpperCase()); }
 function roomView(r){
   return {code:r.code,scenario:r.scenario,event:r.scenario,hostId:r.hostId,started:r.started,completed:Boolean(r.completed),outcome:r.outcome||null,
-    turnIndex:r.turnIndex,progress:r.progress||0,participantsAtStart:r.participantsAtStart||0,scene:r.scene,
+    turnIndex:r.turnIndex,progress:r.progress||0,participantsAtStart:r.participantsAtStart||0,scene:r.scene,log:(r.log||[]).slice(0,20),
     players:[...r.players.values()].map(x=>({id:x.id,name:x.name,ready:x.ready,characterId:x.characterId,character:x.character||x.profile?.character||null,
       alive:x.alive!==false,position:x.position,wounds:x.wounds||0,capacity:x.capacity||6,runUsage:inventoryUsage(x.runInventory||[]),
       runInventory:x.runInventory||[],pendingLoadout:x.pendingLoadout||[]}))};
