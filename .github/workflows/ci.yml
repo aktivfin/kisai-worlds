@@ -17,6 +17,7 @@ jobs:
           node-version: 20
       - run: npm run check
       - run: npm run validate:ui
+      - run: npm run test:combat
       - run: npm run test:smoke
 
   assets:
