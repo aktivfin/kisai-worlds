@@ -202,3 +202,14 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .ingredientList{display:grid;gap:4px;margin:7px 0 12px}.ingredient{display:flex;justify-content:space-between;padding:5px 7px;border:1px solid rgba(128,171,197,.12);font-size:9px}.ingredient.have{color:#92baa4}.ingredient.have b{color:#75d198}.ingredient.missing{color:#9f8582;border-color:rgba(219,103,103,.18)}.ingredient.missing b{color:#d97570}.craftEffect{min-height:38px}.craftCard button:disabled{opacity:.4;cursor:not-allowed;filter:grayscale(.8)}
 @media(max-width:640px){.riskSplit{grid-template-columns:1fr}.itemCoreStats{grid-template-columns:1fr}.globalStatus{width:100%;text-align:center}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
+
+/* interaction polish v0.7.2 */
+#loadoutUsage.over{color:var(--danger);text-shadow:0 0 18px rgba(219,103,103,.35)}
+#saveLoadout:disabled{opacity:.45;cursor:not-allowed}
+.homeBackdrop{transition:opacity .42s ease,filter .42s ease;filter:saturate(.9) contrast(1.03)}
+.homeBackdrop.visible{filter:saturate(1.02) contrast(1.05)}
+.sceneArt[data-kind="boss"]{box-shadow:inset 0 0 120px rgba(143,42,34,.16),0 20px 70px rgba(0,0,0,.48)}
+.sceneArt[data-kind="anomaly"]{box-shadow:inset 0 0 120px rgba(111,56,154,.18),0 20px 70px rgba(0,0,0,.48)}
+.sceneArt[data-kind="loot"]{box-shadow:inset 0 0 120px rgba(51,128,168,.16),0 20px 70px rgba(0,0,0,.48)}
+.sceneArt[data-kind="recon"]{box-shadow:inset 0 0 120px rgba(44,93,121,.13),0 20px 70px rgba(0,0,0,.45)}
+.walletPill{cursor:pointer}
