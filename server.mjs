@@ -556,7 +556,7 @@ async function api(req,res,u){
 
     if(req.method==='POST'&&u.pathname==='/api/rooms'){
       const b=await body(req),event=activeEvent(b.eventId||b.scenarioId);if(!event)return json(res,409,{error:'event_not_active'});
-      const p=ensureProfile(b.name),c=p.characters.find(x=>x.id===(b.characterId||p.activeCharacterId)&&x.status==='alive')||syncActiveCharacter(p);
+      const p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'already_in_active_run'});const c=p.characters.find(x=>x.id===(b.characterId||p.activeCharacterId)&&x.status==='alive')||syncActiveCharacter(p);
       const scene=createScene(event,event.opening||'');scene.music_state='lobby';
       const r={code:code(),scenario:event,hostId:p.id,started:false,completed:false,outcome:null,turnIndex:0,progress:0,participantsAtStart:0,players:new Map(),scene,log:[],createdAt:now()};
       const pl={id:p.id,name:p.name,ready:false,profile:p,characterId:null,character:null,alive:false,wounds:0,nextRollBonus:0,position:spawnPosition(scene,0),capacity:6,pendingLoadout:[],runInventory:[]};
@@ -566,7 +566,7 @@ async function api(req,res,u){
     const join=u.pathname.match(/^\/api\/rooms\/([^/]+)\/join$/);
     if(req.method==='POST'&&join){
       const r=getRoom(join[1]);if(!r)return json(res,404,{error:'room_not_found'});if(r.started)return json(res,409,{error:'run_already_started'});if(r.players.size>=5)return json(res,409,{error:'party_full'});
-      const b=await body(req),p=ensureProfile(b.name),c=p.characters.find(x=>x.id===(b.characterId||p.activeCharacterId)&&x.status==='alive')||syncActiveCharacter(p);
+      const b=await body(req),p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'already_in_active_run'});const c=p.characters.find(x=>x.id===(b.characterId||p.activeCharacterId)&&x.status==='alive')||syncActiveCharacter(p);
       const pl={id:p.id,name:p.name,ready:false,profile:p,characterId:null,character:null,alive:false,wounds:0,nextRollBonus:0,position:spawnPosition(r.scene,r.players.size),capacity:6,pendingLoadout:[],runInventory:[]};
       r.players.set(p.id,pl);if(c)attachCharacterToRoom(r,p,c);return json(res,200,{room:roomView(r),profile:publicProfile(p),access:accessStatus(p,r.scenario)});
     }
