@@ -80,3 +80,30 @@ export function createNpcCombatant({id='enemy',name='Противник',tier=1,
   const baseArmor=armor??clamp(Math.floor((t+1)/2),1,4);
   return{id,name,kind:'hostile',status:'alive',level:t,attributes,combat,dynamicSkills:[],abilities:[balanceAbilityFantasy('Удар',t)],injuries:[],equipment:{chest:{id:id+'_armor',type:'armor',name:'Броня '+name,baseArmor,armor:baseArmor,durability:100,condition:'intact',material:['steel'],damage:[]}}};
 }
+
+export function maxDynamicSkillRank(level=1){
+  return clamp(1+Math.ceil(clamp(Number(level)||1,1,50)/3),1,4);
+}
+
+export function recordSkillUse(character,{name,attribute='perception',success=false}={}){
+  if(!character||!name)return null;
+  materializeCharacterCore(character);
+  const skillName=String(name).trim().slice(0,40);if(!skillName)return null;
+  const key=slug(skillName),gain=success?2:1;
+  character.skillPractice=character.skillPractice&&typeof character.skillPractice==='object'?character.skillPractice:{};
+  const entry=character.skillPractice[key]||{name:skillName,attribute,count:0};
+  entry.attribute=attribute||entry.attribute||'perception';entry.count=(Number(entry.count)||0)+gain;character.skillPractice[key]=entry;
+  let skill=(character.dynamicSkills||[]).find(x=>String(x.id||x.name).toLowerCase()===key||String(x.name).toLowerCase()===skillName.toLowerCase());
+  if(!skill&&entry.count>=4){
+    skill={id:key,name:skillName,rank:1,attribute:entry.attribute};character.dynamicSkills.push(skill);entry.count-=4;
+    return{type:'learned',skill:{...skill},practice:entry.count};
+  }
+  if(skill){
+    const cap=maxDynamicSkillRank(character.level),threshold=5+(Number(skill.rank)||0)*3;
+    if(entry.count>=threshold&&(Number(skill.rank)||0)<cap){
+      entry.count-=threshold;skill.rank=(Number(skill.rank)||0)+1;
+      return{type:'rank_up',skill:{...skill},practice:entry.count,cap};
+    }
+  }
+  return{type:'practice',skill:skill?{...skill}:null,practice:entry.count};
+}
