@@ -435,7 +435,7 @@ function selectCharacter(p,characterId){
 }
 function makeRoomPlayer(p,scene,index=0){
   const c=syncActiveCharacter(p);
-  return{id:p.id,name:p.name,profile:p,characterId:c?.id||null,ready:Boolean(c),alive:Boolean(c),position:spawnPosition(scene,index),wounds:0,nextRollBonus:0,capacity:runCapacity(c),pendingLoadout:[],runInventory:[]};
+  return{id:p.id,name:p.name,profile:p,characterId:c?.id||null,character:c||null,ready:Boolean(c),alive:Boolean(c),position:spawnPosition(scene,index),wounds:0,nextRollBonus:0,capacity:runCapacity(c),pendingLoadout:[],runInventory:[]};
 }
 function findActiveRunForProfile(profileId){for(const r of rooms.values())if(r.started&&!r.completed&&r.players.has(profileId))return r;return null}
 function finishRun(r){
