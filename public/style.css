@@ -182,3 +182,11 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
   .gameTop{display:grid;gap:8px}.gameRunMeta{display:grid;grid-template-columns:1fr 1fr}.progressMeter{grid-column:1/-1}.sceneArt{min-height:330px}.voiceDock{grid-template-columns:1fr}.narration{margin:-70px 6px 0}
   .craftGrid{grid-template-columns:1fr}.walletStats{grid-template-columns:1fr}
 }
+
+/* graceful presentation before the real media pack lands */
+.mediaMissing{opacity:0!important}
+.mediaFallback{position:relative;min-height:92px;background:
+  radial-gradient(circle at 58% 38%,rgba(100,189,255,.16),transparent 25%),
+  radial-gradient(circle at 70% 65%,rgba(216,169,78,.11),transparent 30%),
+  linear-gradient(145deg,#0a1822,#050b10)!important}
+.mediaFallback:after{content:"KisAI // MEDIA PENDING";position:absolute;left:12px;bottom:10px;font-size:7px;letter-spacing:.18em;color:#647884}
