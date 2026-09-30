@@ -11,8 +11,10 @@ const CONFIG_FILE = path.join(DATA, 'config.json');
 const CONFIG_EXAMPLE = path.join(DATA, 'config.example.json');
 const SCENARIOS_FILE = path.join(DATA, 'scenarios.json');
 const STATE_FILE = path.join(DATA, 'state.json');
+const ITEM_MEDIA_DIR = path.join(DATA, 'runtime', 'item-cards');
 
 fs.mkdirSync(DATA, { recursive: true });
+fs.mkdirSync(ITEM_MEDIA_DIR, { recursive: true });
 if (!fs.existsSync(CONFIG_FILE)) fs.copyFileSync(CONFIG_EXAMPLE, CONFIG_FILE);
 
 const readJson = (file, fallback) => {
@@ -170,6 +172,7 @@ function createLoot(profile,state='explore') {
     power:Math.max(1,Math.floor((level+budget)*1.25)),affixes:[{stat:primary,value:Math.max(1,Math.ceil(budget/2))}],
     passive:`Ситуативная синергия с навыком «${primary}».`, lore:`Уникальный предмет, возникший из пути героя ${profile.name}.`,
     adaptiveFor:{name:profile.name,archetype:c.archetype||'Странник',level,dominantSkills:skills,buildFingerprint:fingerprint(c)},
+    visualPrompt:`Square premium dark-fantasy RPG inventory card, single ${slot} item, ${rarity} rarity, designed for ${c.archetype||'adventurer'}, inspired by skills ${skills.join(' and ')||primary}, isolated artifact, cinematic material detail, no text, no UI, no watermark`,visual:null,
     provenance:[{at:now(),type:'found',owner:profile.id}],createdAt:now(),status:'owned',ownerId:profile.id
   };
   return item;
@@ -202,6 +205,24 @@ function farm(profile, action, music) {
   profile.farmToday+=reward; profile.balance+=reward; profile.recentActions.unshift(n); profile.recentActions=profile.recentActions.slice(0,12);
   if(reward) persisted.transactions.unshift({id:id('tx'),at:now(),profileId:profile.id,type:'farm',amount:reward});
   saveState(); return reward;
+}
+function findItemById(itemId){
+  for(const p of Object.values(persisted.profiles)){const item=p.inventory.find(x=>x.id===itemId);if(item)return item;}
+  for(const l of persisted.market){if(l.item?.id===itemId)return l.item;}
+  for(const r of rooms.values()){const item=(r.scene.loot||[]).find(x=>x.id===itemId);if(item)return item;}
+  return null;
+}
+async function ensureItemVisual(item){
+  if(!['epic','relic','mythic'].includes(item.rarity))throw new Error('visual_requires_epic');
+  const existing=path.join(ITEM_MEDIA_DIR,item.id+'.png');
+  if(fs.existsSync(existing)){item.visual={url:'/api/item-media/'+item.id+'.png',generated:true};return item.visual;}
+  const c=runtimeConfig().image||{};if(!c.enabled||!c.api_key||!c.base_url||!c.model)throw new Error('image_not_configured');
+  const r=await fetch(String(c.base_url).replace(/\/$/,'')+'/images/generations',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+c.api_key},body:JSON.stringify({model:c.model,prompt:item.visualPrompt||('RPG item '+item.name),size:'1024x1024',n:1})});
+  if(!r.ok)throw new Error('image_'+r.status);const d=await r.json(),entry=d.data?.[0];let bytes=null;
+  if(entry?.b64_json)bytes=Buffer.from(entry.b64_json,'base64');
+  else if(entry?.url){const ir=await fetch(entry.url);if(ir.ok)bytes=Buffer.from(await ir.arrayBuffer());}
+  if(!bytes?.length||bytes.length>12_000_000)throw new Error('invalid_generated_image');
+  fs.writeFileSync(existing,bytes);item.visual={url:'/api/item-media/'+item.id+'.png',generated:true};saveState();return item.visual;
 }
 function sceneGeometryFor(scenario){
   const id=scenario?.id||'default';
@@ -245,6 +266,11 @@ async function api(req,res,u){
   try {
     if(req.method==='GET'&&u.pathname==='/api/health') return json(res,200,{ok:true,version:'0.6.1',llm:providerReady('llm'),stt:providerReady('stt'),tts:providerReady('tts')});
     if(req.method==='GET'&&u.pathname==='/api/scenarios') return json(res,200,scenarios);
+    const itemMedia=u.pathname.match(/^\/api\/item-media\/([a-zA-Z0-9_-]+)\.png$/);
+    if(req.method==='GET'&&itemMedia){const file=path.join(ITEM_MEDIA_DIR,itemMedia[1]+'.png');if(!fs.existsSync(file)){res.writeHead(404);return res.end('Not found');}res.writeHead(200,{'content-type':'image/png','cache-control':'private, max-age=86400'});return fs.createReadStream(file).pipe(res);}
+    const itemVisual=u.pathname.match(/^\/api\/items\/([^/]+)\/visual$/);
+    if(req.method==='POST'&&itemVisual){const b=await body(req);ensureProfile(b.name);const item=findItemById(itemVisual[1]);if(!item)return json(res,404,{error:'item_not_found'});try{return json(res,200,{visual:await ensureItemVisual(item)})}catch(e){return json(res,e.message==='image_not_configured'?409:422,{error:e.message});}}
+
     if(req.method==='GET'&&u.pathname==='/api/config') {
       const c=readJson(CONFIG_FILE,{});
       const scrub=o=>Object.fromEntries(Object.entries(o||{}).map(([k,v])=>[k,/key/i.test(k)?(v?'••••••':''):v]));
