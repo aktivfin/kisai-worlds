@@ -24,6 +24,10 @@ if(badForEach.length){
   for(const line of badForEach)console.error(line.trim());
   process.exit(1);
 }
+const staticButtonIds=[...html.matchAll(/<button[^>]*\bid=["']([^"']+)["'][^>]*>/g)].map(m=>m[1]);
+const unhandledButtons=staticButtonIds.filter(id=>!app.includes("'#"+id+"'")&&!app.includes('"#'+id+'"')&&!app.includes("getElementById('"+id+"')")&&!app.includes('getElementById("'+id+'")'));
+if(unhandledButtons.length){console.error('Static button ids without client wiring:',unhandledButtons.join(', '));process.exit(1);}
+
 for(const required of ['server.mjs','public/app.js','public/style.css','public/index.html']){
   if(!fs.existsSync(required)){console.error('Missing source:',required);process.exit(1);}
 }
