@@ -12,6 +12,7 @@
 - [x] Fixed event danger tiers; no party-size difficulty scaling.
 - [x] 1–5 player expeditions.
 - [x] Per-player event access gate: free / subscription / run entitlement.
+- [x] One active expedition per account.
 - [x] Three base living-character slots.
 - [x] Persistent level/XP and permanent character death.
 - [x] Unlimited account stash vs limited character expedition backpack.
@@ -23,7 +24,7 @@
 - [x] Behavior/build-adaptive unique item instances.
 - [x] Extraction, dropped gear recovery and left-behind loss.
 - [x] Player-priced KAI secondary market preserving serial/provenance/enchantments.
-- [x] End-to-end smoke coverage of slots, crafting, fixed DC, extraction, permadeath and ally recovery.
+- [x] End-to-end smoke coverage of slots, crafting, fixed DC, paid-party access, adventure enchanting, extraction, permadeath and ally recovery.
 - [ ] Production billing provider + entitlement webhooks.
 - [ ] Production database and concurrency-safe market ledger.
 
