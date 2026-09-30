@@ -35,8 +35,81 @@ const code = () => crypto.randomBytes(3).toString('hex').toUpperCase();
 const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
 const normalize = s => String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
 const json = (res,status,body) => { const data=JSON.stringify(body); res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}); res.end(data); };
-const body = req => new Promise((resolve,reject)=>{ let raw=''; req.on('data',c=>{raw+=c;if(raw.length>2_000_000){reject(new Error('body too large'));req.destroy();}}); req.on('end',()=>{try{resolve(raw?JSON.parse(raw):{});}catch(e){reject(e);}}); req.on('error',reject); });
+const body = req => new Promise((resolve,reject)=>{ let raw=''; req.on('data',c=>{raw+=c;if(raw.length>15_000_000){reject(new Error('body too large'));req.destroy();}}); req.on('end',()=>{try{resolve(raw?JSON.parse(raw):{});}catch(e){reject(e);}}); req.on('error',reject); });
 const saveState = () => writeJson(STATE_FILE, persisted);
+
+
+function runtimeConfig(){ return readJson(CONFIG_FILE, {}); }
+function providerReady(section){ const c=runtimeConfig()[section]||{}; return Boolean(c.api_key && c.base_url && c.model); }
+function safeJsonText(text=''){
+  const cleaned=String(text).trim().replace(/^\\\`\\\`\\\`(?:json)?/i,'').replace(/\\\`\\\`\\\`$/,'').trim();
+  try{return JSON.parse(cleaned)}catch{return null}
+}
+async function openAIChat(messages, temperature=.7){
+  const c=runtimeConfig().llm||{};
+  if(!c.api_key||!c.base_url||!c.model) return null;
+  const url=String(c.base_url).replace(/\/$/,'')+'/chat/completions';
+  const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer '+c.api_key},body:JSON.stringify({model:c.model,messages,temperature})});
+  if(!r.ok) throw new Error('llm_'+r.status);
+  const d=await r.json();
+  return d.choices?.[0]?.message?.content||null;
+}
+async function generateCharacterAI(wish,appearance){
+  if(!providerReady('llm')) return null;
+  const prompt='Return ONLY compact JSON for a level-1 RPG character. Preserve fantasy, but keep numeric power server-safe. Schema: {"archetype":string,"concept":string,"skills":{"Сила":1-4,"Ловкость":1-4,"Интеллект":1-4,"Воля":1-4,"Восприятие":1-4},"abilities":[string,string],"weakness":string}. Total skill points must be <=13.';
+  const text=await openAIChat([{role:'system',content:prompt},{role:'user',content:'Concept: '+wish+'\\nAppearance: '+appearance}],.5);
+  const x=safeJsonText(text); if(!x||typeof x!=='object') return null;
+  const base=fallbackCharacter(wish,appearance), skills={};
+  for(const k of Object.keys(base.skills)) skills[k]=clamp(Number(x.skills?.[k])||base.skills[k],1,4);
+  let total=Object.values(skills).reduce((a,b)=>a+b,0);
+  while(total>13){const k=Object.keys(skills).sort((a,b)=>skills[b]-skills[a])[0];if(skills[k]<=1)break;skills[k]--;total--;}
+  return {...base,archetype:String(x.archetype||base.archetype).slice(0,48),concept:String(x.concept||wish||base.concept).slice(0,400),skills,abilities:Array.isArray(x.abilities)?x.abilities.slice(0,2).map(v=>String(v).slice(0,180)):base.abilities,weakness:String(x.weakness||base.weakness).slice(0,180)};
+}
+async function resolveGMAI(room,action,actor){
+  if(!providerReady('llm')) return null;
+  const recent=room.log.slice(0,8).reverse().map(x=>x.actor+': '+x.action+' -> '+x.narration).join('\\n');
+  const system='You are the authoritative GM runtime for KisAI Worlds. Resolve one player action using only established scene facts. Never grant impossible numeric power because the player asks for it. Return ONLY JSON: {"narration":string,"music_state":"explore|tavern|investigation|discovery|tension|chase|ritual|abyss|dread|hell|boss|grief","intensity":0..1,"scene_transition":boolean,"loot":boolean}. Keep narration under 650 chars.';
+  const user='Scenario: '+room.scenario?.title+'\\nOpening: '+room.scenario?.opening+'\\nCurrent scene: '+room.scene?.narration+'\\nRecent history:\\n'+recent+'\\nActor: '+actor.name+' / '+JSON.stringify(actor.character||{})+'\\nAction: '+action;
+  const text=await openAIChat([{role:'system',content:system},{role:'user',content:user}],.65);
+  const x=safeJsonText(text); if(!x)return null;
+  const allowed=['explore','tavern','investigation','discovery','tension','chase','ritual','abyss','dread','hell','boss','grief'];
+  return {narration:String(x.narration||'').slice(0,900)||fallbackGM(room,action,actor).narration,music_state:allowed.includes(x.music_state)?x.music_state:classifyMusic(x.narration||action),intensity:clamp(Number(x.intensity)||.4,0,1),scene_transition:Boolean(x.scene_transition),loot:Boolean(x.loot)};
+}
+async function transcribeAudio(audioBase64,mimeType='audio/webm'){
+  const c=runtimeConfig().stt||{}; if(!c.api_key||!c.base_url||!c.model) throw new Error('stt_not_configured');
+  const bytes=Buffer.from(String(audioBase64||''),'base64'); if(!bytes.length||bytes.length>10_000_000) throw new Error('invalid_audio');
+  const form=new FormData(); form.set('model',c.model); form.set('file',new Blob([bytes],{type:mimeType}),'turn.webm');
+  const r=await fetch(String(c.base_url).replace(/\/$/,'')+'/audio/transcriptions',{method:'POST',headers:{authorization:'Bearer '+c.api_key},body:form});
+  if(!r.ok) throw new Error('stt_'+r.status); const d=await r.json(); return String(d.text||'').trim();
+}
+async function synthesizeSpeech(text){
+  const c=runtimeConfig().tts||{}; if(!c.api_key||!c.model||!text) return null;
+  if((c.provider||'openai')==='openai'){
+    if(!c.base_url)return null;
+    const r=await fetch(String(c.base_url).replace(/\/$/,'')+'/audio/speech',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+c.api_key},body:JSON.stringify({model:c.model,voice:c.voice||'alloy',input:text,format:'mp3'})});
+    if(!r.ok)return null; return Buffer.from(await r.arrayBuffer()).toString('base64');
+  }
+  if(c.provider==='elevenlabs'&&c.base_url&&c.voice){
+    const r=await fetch(String(c.base_url).replace(/\/$/,'')+'/v1/text-to-speech/'+encodeURIComponent(c.voice),{method:'POST',headers:{'content-type':'application/json','xi-api-key':c.api_key},body:JSON.stringify({text,model_id:c.model})});
+    if(!r.ok)return null; return Buffer.from(await r.arrayBuffer()).toString('base64');
+  }
+  return null;
+}
+function commitTurn(r,p,action,result){
+  const earned=farm(p,action,result.music_state);let loot=null;
+  if(result.loot&&p.character){loot=createLoot(p,result.music_state);p.inventory.push(loot);saveState();}
+  const previousSceneId=r.scene.id;
+  if(result.scene_transition){
+    const abandoned=(r.scene.loot||[]).filter(x=>x.status==='scene');
+    for(const item of abandoned){item.status='lost';item.provenance.push({at:now(),type:'lost',sceneId:previousSceneId});}
+    r.scene={id:id('scene'),title:r.scenario?.title||'Сцена',loot:[]};
+  }
+  r.scene={...r.scene,narration:result.narration,music_state:result.music_state,intensity:result.intensity};
+  r.log.unshift({at:now(),actor:p.name,action,narration:result.narration});
+  const alive=[...r.players.values()].filter(x=>x.profile.alive);
+  if(alive.length)r.turnIndex=(r.turnIndex+1)%alive.length;
+  return {earned,loot};
+}
 
 function ensureProfile(name='Игрок') {
   const key = normalize(name) || 'player';
@@ -116,7 +189,7 @@ function roomView(r){ return {code:r.code,scenario:r.scenario,hostId:r.hostId,st
 
 async function api(req,res,u){
   try {
-    if(req.method==='GET'&&u.pathname==='/api/health') return json(res,200,{ok:true,version:'0.6.2-runtime'});
+    if(req.method==='GET'&&u.pathname==='/api/health') return json(res,200,{ok:true,version:'0.6.1',llm:providerReady('llm'),stt:providerReady('stt'),tts:providerReady('tts')});
     if(req.method==='GET'&&u.pathname==='/api/scenarios') return json(res,200,scenarios);
     if(req.method==='GET'&&u.pathname==='/api/config') {
       const c=readJson(CONFIG_FILE,{});
@@ -139,11 +212,21 @@ async function api(req,res,u){
     const roomGet=u.pathname.match(/^\/api\/rooms\/([^/]+)$/);
     if(req.method==='GET'&&roomGet){const r=getRoom(roomGet[1]);return r?json(res,200,roomView(r)):json(res,404,{error:'room_not_found'});}
     const char=u.pathname.match(/^\/api\/rooms\/([^/]+)\/character$/);
-    if(req.method==='POST'&&char){const r=getRoom(char[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);p.character=fallbackCharacter(b.wish,b.appearance);saveState();const rp=r.players.get(p.id);if(rp)rp.ready=true;return json(res,200,{character:p.character,profile:publicProfile(p),room:roomView(r)});}
+    if(req.method==='POST'&&char){const r=getRoom(char[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);let generated=null;try{generated=await generateCharacterAI(b.wish,b.appearance)}catch(e){console.warn('character AI fallback:',e.message)}p.character=generated||fallbackCharacter(b.wish,b.appearance);saveState();const rp=r.players.get(p.id);if(rp)rp.ready=true;return json(res,200,{character:p.character,profile:publicProfile(p),room:roomView(r),ai:Boolean(generated)});}
     const start=u.pathname.match(/^\/api\/rooms\/([^/]+)\/start$/);
     if(req.method==='POST'&&start){const r=getRoom(start[1]);if(!r)return json(res,404,{error:'room_not_found'});r.started=true;r.scene.music_state='explore';return json(res,200,roomView(r));}
     const turn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/turn$/);
-    if(req.method==='POST'&&turn){const r=getRoom(turn[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);if(!p.alive)return json(res,409,{error:'character_dead'});const result=fallbackGM(r,b.action||'осматривается',p);const earned=farm(p,b.action,result.music_state);let loot=null;if(result.loot&&p.character){loot=createLoot(p,result.music_state);p.inventory.push(loot);saveState();}r.scene={...r.scene,narration:result.narration,music_state:result.music_state,intensity:result.intensity};r.log.unshift({at:now(),actor:p.name,action:b.action,narration:result.narration});return json(res,200,{...result,earned,loot,room:roomView(r),profile:publicProfile(p)});}
+    if(req.method==='POST'&&turn){const r=getRoom(turn[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);if(!p.alive)return json(res,409,{error:'character_dead'});const action=String(b.action||'осматривается').slice(0,1200);let result=null;try{result=await resolveGMAI(r,action,p)}catch(e){console.warn('GM AI fallback:',e.message)}result=result||fallbackGM(r,action,p);const committed=commitTurn(r,p,action,result);return json(res,200,{...result,...committed,room:roomView(r),profile:publicProfile(p),ai:Boolean(result&&providerReady('llm'))});}
+    
+    const voiceTurn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/voice-turn$/);
+    if(req.method==='POST'&&voice){
+      const r=getRoom(voiceTurn[1]);if(!r)return json(res,404,{error:'room_not_found'});
+      const b=await body(req),p=ensureProfile(b.name);if(!p.alive)return json(res,409,{error:'character_dead'});
+      const action=await transcribeAudio(b.audioBase64,b.mimeType||'audio/webm');if(!action)return json(res,422,{error:'empty_transcript'});
+      let result=null;try{result=await resolveGMAI(r,action,p)}catch(e){console.warn('GM AI fallback:',e.message)}result=result||fallbackGM(r,action,p);
+      const committed=commitTurn(r,p,action,result);let speechBase64=null;try{speechBase64=await synthesizeSpeech(result.narration)}catch(e){console.warn('TTS fallback:',e.message)}
+      return json(res,200,{transcript:action,...result,...committed,room:roomView(r),profile:publicProfile(p),speechBase64,speechMime:'audio/mpeg'});
+    }
     if(req.method==='GET'&&u.pathname==='/api/profile'){const p=ensureProfile(u.searchParams.get('name'));return json(res,200,publicProfile(p));}
     if(req.method==='GET'&&u.pathname==='/api/market') return json(res,200,persisted.market.filter(x=>x.status==='active'));
     if(req.method==='POST'&&u.pathname==='/api/market/list'){const b=await body(req),p=ensureProfile(b.name),idx=p.inventory.findIndex(x=>x.id===b.itemId);if(idx<0)return json(res,404,{error:'item_not_found'});const [item]=p.inventory.splice(idx,1);item.status='escrow';const listing={id:id('listing'),item,sellerId:p.id,sellerName:p.name,price:clamp(Number(b.price)||1,1,1_000_000),status:'active',createdAt:now()};persisted.market.push(listing);saveState();return json(res,201,listing);}
