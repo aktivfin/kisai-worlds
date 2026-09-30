@@ -41,15 +41,23 @@ function economy(){
   let inv=$('#inventoryGrid'); if(inv)inv.innerHTML=(S.profile.inventory||[]).map(i=>card(i)).join('')||'<div class="emptyState">Инвентарь пуст. Уникальный лут появляется в приключениях.</div>';
   let slots=['weapon','armor','charm','tool'],load=$('#heroLoadout');
   if(load)load.innerHTML=slots.map(s=>{let i=(S.profile.inventory||[]).find(x=>x.id===S.profile.equipped?.[s]);return '<div class="loadoutSlot"><small>'+s.toUpperCase()+'</small><b>'+(i?esc(i.name):'Пусто')+'</b><span>'+(i?rarity(i.rarity):'Нет предмета')+'</span></div>'}).join('');
+  let tx=$('#txList');
+  if(tx){
+    const labels={farm:'Награда за ход',market_buy:'Покупка',market_sale:'Продажа',market_list:'Выставлен лот',market_cancel:'Лот снят'};
+    tx.innerHTML=(S.profile.transactions||[]).map(t=>'<div class="txRow"><div><b>'+esc(labels[t.type]||t.type)+'</b><small>'+new Date(t.at).toLocaleString()+'</small></div><strong class="'+((t.amount||0)>0?'positive':(t.amount||0)<0?'negative':'')+'">'+((t.amount||0)>0?'+':'')+(t.amount||0)+' KAI</strong></div>').join('')||'<div class="emptyState">Операций пока нет.</div>';
+  }
   bindItems();
 }
 async function market(){
   let a=await api('/api/market'),g=$('#marketGrid'); if(!g)return;
-  g.innerHTML=a.length?a.map(l=>'<div class="marketCard">'+card(l.item,l)+'<div class="sellerRow"><span>'+esc(l.sellerName)+'</span><button class="goldBtn mini buyBtn" data-id="'+l.id+'">Купить</button></div></div>').join(''):'<div class="emptyState">Активных лотов пока нет.</div>';
-  $$('.buyBtn',g).forEach(b=>b.onclick=async e=>{e.stopPropagation();try{let d=await api('/api/market/buy',{method:'POST',body:JSON.stringify({name:S.name,listingId:b.dataset.id})});S.profile=d.profile;economy();await market();toast('Предмет куплен')}catch(x){toast(x.message)}});
+  g.innerHTML=a.length?a.map(l=>'<div class="marketCard">'+card(l.item,l)+'<div class="sellerRow"><span>'+esc(l.sellerName)+'</span>'+(l.sellerId===S.profile?.id?'<button class="softBtn mini cancelBtn" data-id="'+l.id+'">Снять</button>':'<button class="goldBtn mini buyBtn" data-id="'+l.id+'">Купить</button>')+'</div></div>').join(''):'<div class="emptyState">Активных лотов пока нет.</div>';
+  $('.buyBtn',g).forEach(b=>b.onclick=async e=>{e.stopPropagation();try{let d=await api('/api/market/buy',{method:'POST',body:JSON.stringify({name:S.name,listingId:b.dataset.id})});S.profile=d.profile;economy();await market();toast('Предмет куплен')}catch(x){toast(x.message)}});
+  $('.cancelBtn',g).forEach(b=>b.onclick=async e=>{e.stopPropagation();try{let d=await api('/api/market/cancel',{method:'POST',body:JSON.stringify({name:S.name,listingId:b.dataset.id})});S.profile=d.profile;economy();await market();toast('Лот снят')}catch(x){toast(x.message)}});
 }
 function bindItems(){
-  $$('.itemCard').forEach(c=>c.onclick=()=>{let i=(S.profile?.inventory||[]).find(x=>x.id===c.dataset.item);if(!i)return;$('#inspectorBody').innerHTML='<small>'+rarity(i.rarity)+'</small><h2>'+esc(i.name)+'</h2><p>'+esc(i.lore||'')+'</p><p>'+esc(i.passive||'')+'</p><code>'+esc(i.serial)+'</code><div class="sellRow"><input id="sellPrice" type="number" min="1" placeholder="Цена KAI"><button id="sellItem" class="goldBtn">Выставить</button></div>';$('#itemInspector').classList.remove('hidden');$('#sellItem').onclick=async()=>{let price=Number($('#sellPrice').value);if(!price)return toast('Укажи цену');try{await api('/api/market/list',{method:'POST',body:JSON.stringify({name:S.name,itemId:i.id,price})});await profile();await market();$('#itemInspector').classList.add('hidden');toast('Лот выставлен')}catch(x){toast(x.message)}}});
+  $('.itemCard').forEach(c=>c.onclick=()=>{let i=(S.profile?.inventory||[]).find(x=>x.id===c.dataset.item);if(!i)return;let equipped=S.profile?.equipped?.[i.slot]===i.id;$('#inspectorBody').innerHTML='<small>'+rarity(i.rarity)+'</small><h2>'+esc(i.name)+'</h2><p>'+esc(i.lore||'')+'</p><p>'+esc(i.passive||'')+'</p><code>'+esc(i.serial)+'</code><div class="itemActions"><button id="equipItem" class="softBtn">'+(equipped?'Снять':'Экипировать')+'</button></div><div class="sellRow"><input id="sellPrice" type="number" min="1" placeholder="Цена KAI"><button id="sellItem" class="goldBtn">Выставить</button></div>';$('#itemInspector').classList.remove('hidden');
+    $('#equipItem').onclick=async()=>{try{S.profile=await api(equipped?'/api/profile/unequip':'/api/profile/equip',{method:'POST',body:JSON.stringify(equipped?{name:S.name,slot:i.slot}:{name:S.name,itemId:i.id})});economy();$('#itemInspector').classList.add('hidden');toast(equipped?'Предмет снят':'Предмет экипирован')}catch(x){toast(x.message)}};
+    $('#sellItem').onclick=async()=>{let price=Number($('#sellPrice').value);if(!price)return toast('Укажи цену');try{await api('/api/market/list',{method:'POST',body:JSON.stringify({name:S.name,itemId:i.id,price})});await profile();await market();$('#itemInspector').classList.add('hidden');toast('Лот выставлен')}catch(x){toast(x.message)}}});
 }
 async function music(name){
   if(!name||S.music===name)return;S.music=name;if($('#musicTitle'))$('#musicTitle').textContent=name;
