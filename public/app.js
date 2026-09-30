@@ -63,6 +63,41 @@ function game(){
   if($('#myStats')&&S.profile)$('#myStats').innerHTML='<small>Твой герой</small><b>'+esc(S.profile.character?.archetype||'—')+'</b><span>'+S.profile.balance+' KAI</span>';
   music(sc.music_state||'explore');
 }
+
+function applyTurn(d){
+  S.room=d.room;S.profile=d.profile;game();economy();
+  if(d.transcript)toast('Распознано: '+d.transcript.slice(0,90));
+  else toast(d.loot?'Найдено: '+d.loot.name:(d.earned?'+'+d.earned+' KAI':'Ход выполнен'));
+  if(d.speechBase64){
+    try{let a=new Audio('data:'+(d.speechMime||'audio/mpeg')+';base64,'+d.speechBase64);if(S.audio)S.audio.volume=S.volume*.28;a.onended=()=>{if(S.audio)S.audio.volume=S.volume};a.play().catch(()=>{if(S.audio)S.audio.volume=S.volume})}catch{}
+  }
+}
+function blobBase64(blob){return new Promise((resolve,reject)=>{let r=new FileReader();r.onload=()=>resolve(String(r.result).split(',')[1]||'');r.onerror=reject;r.readAsDataURL(blob)})}
+function setupVoice(){
+  let btn=$('#ptt');if(!btn||!navigator.mediaDevices||!window.MediaRecorder){if(btn)btn.onclick=()=>toast('Браузер не поддерживает запись микрофона');return}
+  let rec=null,chunks=[],stream=null,started=0;
+  const begin=async e=>{
+    e.preventDefault();if(rec?.state==='recording'||!S.room)return;
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+      chunks=[];rec=new MediaRecorder(stream);started=Date.now();rec.ondataavailable=x=>{if(x.data.size)chunks.push(x.data)};
+      rec.onstop=async()=>{
+        btn.classList.remove('recording');if($('#voiceStatus'))$('#voiceStatus').innerHTML='<span></span>Распознаём речь…';
+        stream?.getTracks().forEach(t=>t.stop());
+        if(Date.now()-started<350)return toast('Слишком короткая запись');
+        try{
+          let blob=new Blob(chunks,{type:rec.mimeType||'audio/webm'}),audioBase64=await blobBase64(blob);
+          let d=await api('/api/rooms/'+S.room.code+'/voice-turn',{method:'POST',body:JSON.stringify({name:S.name,audioBase64,mimeType:blob.type||'audio/webm'})});
+          applyTurn(d);
+        }catch(x){toast(x.message==='stt_not_configured'?'Настрой STT API в ⚙ AI':x.message)}
+        finally{if($('#voiceStatus'))$('#voiceStatus').innerHTML='<span></span>Ожидание хода'}
+      };
+      rec.start();btn.classList.add('recording');if($('#voiceStatus'))$('#voiceStatus').innerHTML='<span></span>Говори…';if(S.audio)S.audio.volume=S.volume*.28;
+    }catch{toast('Не удалось получить доступ к микрофону')}
+  };
+  const end=e=>{e?.preventDefault();if(rec?.state==='recording')rec.stop();if(S.audio)S.audio.volume=S.volume};
+  btn.addEventListener('pointerdown',begin);window.addEventListener('pointerup',end);window.addEventListener('pointercancel',end);
+}
 function econTab(n){show('economy');$$('.econTab').forEach(e=>e.classList.toggle('active',e.dataset.tab===n));$$('.econPane').forEach(e=>e.classList.remove('active'));let id='#econ'+n[0].toUpperCase()+n.slice(1);$(id)?.classList.add('active');if(n==='market')market()}
 
 async function init(){
@@ -73,12 +108,12 @@ async function init(){
   $('#joinRoom').onclick=async()=>{try{saveName($('#joinName').value);let c=$('#roomCode').value.trim().toUpperCase(),d=await api('/api/rooms/'+c+'/join',{method:'POST',body:JSON.stringify({name:S.name})});S.room=d.room;S.profile=d.profile;room();await wait();show('lobby');music('lobby')}catch{x=>toast(x.message);toast('Комната не найдена')}};
   $('#genChar').onclick=async()=>{try{let d=await api('/api/rooms/'+S.room.code+'/character',{method:'POST',body:JSON.stringify({name:S.name,wish:$('#charWish').value,appearance:$('#charAppearance').value})});S.room=d.room;S.profile=d.profile;character(d.character);room();$('#saveChar').disabled=false;toast('Герой сбалансирован')}catch(x){toast(x.message)}};
   $('#saveChar').onclick=()=>toast('Герой выбран');$('#startGame').onclick=async()=>{try{S.room=await api('/api/rooms/'+S.room.code+'/start',{method:'POST',body:'{}'});game();await wait(550);show('game')}catch(x){toast(x.message)}};
-  $('#sendText').onclick=async()=>{let a=$('#textTurn').value.trim();if(!a)return;$('#textTurn').value='';try{let d=await api('/api/rooms/'+S.room.code+'/turn',{method:'POST',body:JSON.stringify({name:S.name,action:a})});S.room=d.room;S.profile=d.profile;game();economy();toast(d.loot?'Найдено: '+d.loot.name:(d.earned?'+'+d.earned+' KAI':'Ход выполнен'))}catch(x){toast(x.message)}};
+  $('#sendText').onclick=async()=>{let a=$('#textTurn').value.trim();if(!a)return;$('#textTurn').value='';try{let d=await api('/api/rooms/'+S.room.code+'/turn',{method:'POST',body:JSON.stringify({name:S.name,action:a})});applyTurn(d)}catch(x){toast(x.message)}};
   $('#textTurn').onkeydown=e=>{if(e.key==='Enter')$('#sendText').click()};$('#copyLink').onclick=()=>navigator.clipboard?.writeText(location.origin+'?room='+(S.room?.code||'')).then(()=>toast('Ссылка скопирована'));
   $('#settingsBtn').onclick=async()=>{modal('#settings');let c=await api('/api/config');$('#llmUrl').value=c.llm?.base_url||'';$('#llmModel').value=c.llm?.model||'';$('#sttModel').value=c.stt?.model||'';$('#ttsProvider').value=c.tts?.provider||'openai';$('#ttsModel').value=c.tts?.model||'';$('#ttsVoice').value=c.tts?.voice||'';$('#imgEnabled').checked=!!c.image?.enabled;$('#imgModel').value=c.image?.model||'';$('#musicVolume').value=Math.round(S.volume*100)};
   $('#saveSettings').onclick=async()=>{S.volume=Number($('#musicVolume').value)/100;localStorage.setItem('kisai.musicVolume',String(Math.round(S.volume*100)));if(S.audio)S.audio.volume=S.volume;await api('/api/config',{method:'POST',body:JSON.stringify({llm:{base_url:$('#llmUrl').value,model:$('#llmModel').value,api_key:$('#llmKey').value},stt:{model:$('#sttModel').value,api_key:$('#sttKey').value},tts:{provider:$('#ttsProvider').value,model:$('#ttsModel').value,voice:$('#ttsVoice').value,api_key:$('#ttsKey').value},image:{enabled:$('#imgEnabled').checked,model:$('#imgModel').value,api_key:$('#imgKey').value}})});modal('#settings',false);toast('Настройки сохранены')};
   $('#closeSettings').onclick=()=>modal('#settings',false);$('#closeTour').onclick=()=>modal('#tour',false);$('#closeInstall').onclick=()=>modal('#install',false);$('#closeInspector').onclick=()=>$('#itemInspector').classList.add('hidden');$('#refreshMarket').onclick=market;
   let q=new URLSearchParams(location.search).get('room');if(q){show('join');$('#roomCode').value=q.toUpperCase()}
-  $('#ptt').onclick=()=>toast('Voice STT будет подключён следующим runtime-патчем; текстовые ходы уже работают.');
+  setupVoice();
 }
 init().catch(e=>{console.error(e);toast('Ошибка запуска: '+e.message)});
