@@ -250,6 +250,7 @@ function renderRoom(){
   $('#playerCount').textContent=(S.room.players?.length||0)+' / 5';
   $('#players').innerHTML=(S.room.players||[]).map(p=>'<div class="playerCard '+(p.ready?'ready':'')+'"><div class="playerAvatar">'+esc((p.name||'?')[0].toUpperCase())+'</div><div><b>'+esc(p.name)+'</b><small>'+(p.character?esc(p.character.name||p.character.archetype)+' · LVL '+p.character.level:'Нужен живой персонаж')+'</small></div><span>'+(p.ready?'ГОТОВ':'…')+'</span></div>').join('');
   renderCharacterRoster();
+  renderCharacterCard(S.profile?.character||myRoomPlayer()?.character||null);
   renderLoadout();
 }
 function renderCharacterCard(c){
@@ -258,12 +259,14 @@ function renderCharacterCard(c){
   const attrs=Object.entries(c.attributes||{}).map(([k,v])=>'<span><b>'+esc(labels[k]||k)+'</b><i>'+(v>=0?'+':'')+v+'</i></span>').join('');
   const skills=(c.dynamicSkills||[]).map(s=>'<span><b>'+esc(s.name)+'</b><i>+'+(s.rank||0)+'</i></span>').join('');
   const abilities=(c.abilities||[]).map(x=>typeof x==='string'?'<span>✦ '+esc(x)+'</span>':'<span class="abilityMechanic"><b>✦ '+esc(x.name)+'</b><small>'+esc(x.damage||'—')+' · '+(x.range||0)+' м · '+(x.targets||1)+' цель · '+esc(x.damageType||'effect')+(x.cooldown?' · CD '+x.cooldown:'')+'</small></span>').join('');
-  const combat=c.combat||{};
+  const combat=c.combat||{},points=Number(c.developmentPoints)||0;
+  const evolution=points>0?'<div class="abilityEvolution"><div><small>РАЗВИТИЕ · '+points+' оч.</small><b>Предложи направление сам</b></div><select id="evolveAbilitySelect">'+(c.abilities||[]).map(x=>'<option value="'+esc(x.id||'')+'">Изменить: '+esc(x.name||x.fantasy||'Способность')+'</option>').join('')+'<option value="__new__">Создать новую способность</option></select><input id="evolveAbilityIdea" maxlength="180" placeholder="Например: хочу оставлять Разрез как ловушку"><button id="evolveAbilityBtn" class="softBtn">Сбалансировать развитие</button></div>':'';
   $('#charCard').innerHTML='<div class="generatedCharacter"><div class="charTitle"><small>LEVEL '+c.level+' · XP '+(c.xp||0)+' · CORE '+esc(c.coreVersion||'legacy')+'</small><h3>'+esc(c.name||c.archetype)+'</h3></div><p>'+esc(c.concept)+'</p>'+
     '<div class="combatSummary"><span>HP <b>'+(combat.hp_current??'—')+'/'+(combat.hp_max??'—')+'</b></span><span>Уклонение <b>'+(combat.evasion??'—')+'</b></span><span>Инициатива <b>'+((combat.initiative??0)>=0?'+':'')+(combat.initiative??0)+'</b></span></div>'+
     '<p class="railLabel">ХАРАКТЕРИСТИКИ</p><div class="skillGrid attributesGrid">'+attrs+'</div>'+
     (skills?'<p class="railLabel">ДИНАМИЧЕСКИЕ НАВЫКИ</p><div class="skillGrid">'+skills+'</div>':'')+
-    '<p class="railLabel">СПОСОБНОСТИ</p><div class="abilityList">'+abilities+'</div></div>';
+    '<p class="railLabel">СПОСОБНОСТИ</p><div class="abilityList">'+abilities+'</div>'+evolution+'</div>';
+  const btn=document.getElementById('evolveAbilityBtn');if(btn)btn.onclick=async()=>{const sel=document.getElementById('evolveAbilitySelect'),idea=document.getElementById('evolveAbilityIdea')?.value.trim();if(!idea)return toast('Опиши направление развития');try{btn.disabled=true;const isNew=sel.value==='__new__',d=await api('/api/profile/ability-evolve',{method:'POST',body:JSON.stringify({name:S.name,mode:isNew?'new':'modify',abilityId:isNew?null:sel.value,idea})});S.profile=d.profile;renderProfile();renderCharacterCard(d.character);toast('Способность сбалансирована: '+d.ability.name)}catch(e){toast(e.message==='no_development_points'?'Нет очков развития':e.message)}finally{btn.disabled=false}};
 }
 function myRoomPlayer(){return S.room?.players?.find(p=>p.id===S.profile?.id)||null}
 function loadoutPreview(){
