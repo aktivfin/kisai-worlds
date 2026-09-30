@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {resolveAttack,effectiveArmor,targetedEvasion,conditionLabel} from '../core/combat.mjs';
-import {balanceAbilityFantasy,materializeCharacterCore,recordSkillUse,maxDynamicSkillRank} from '../core/character.mjs';
+import {balanceAbilityFantasy,materializeCharacterCore,recordSkillUse,maxDynamicSkillRank,evolveAbilityDefinition,maxAbilitySlots} from '../core/character.mjs';
 import {spawn} from 'node:child_process';
 
 {
@@ -48,6 +48,13 @@ import {spawn} from 'node:child_process';
   assert.equal(learner.dynamicSkills.length,before+1,'repeated relevant actions should create a dynamic skill');
   assert.equal(learned.rank,1);
   assert.equal(maxDynamicSkillRank(1),2);
+  const evolving=materializeCharacterCore({level:4,concept:'пространственный мечник',abilities:['Разрез пространства'],developmentPoints:1});
+  const originalId=evolving.abilities[0].id;
+  const evolved=evolveAbilityDefinition(evolving,{abilityId:originalId,idea:'мощный Разрез пространства',mode:'modify'});
+  assert.equal(evolved.id,originalId,'evolution must preserve ability identity');
+  assert.equal(evolved.damage,'1d10');
+  assert.ok(evolved.cooldown>=1,'higher direct damage needs an economy constraint');
+  assert.equal(maxAbilitySlots(4),2);
 }
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
