@@ -81,6 +81,7 @@ try{
   if(!risky.dice||risky.dice.die!==20)throw new Error('deterministic risky d20 missing');
   const expectedDc=Math.max(7,Math.min(19,7+free.danger_tier*2));
   if(risky.dice.dc!==expectedDc)throw new Error('difficulty adapted unexpectedly: '+risky.dice.dc+' vs '+expectedDc);
+  if(!Array.isArray(risky.room.log)||!risky.room.log.some(x=>x.action?.includes('крадусь вперёд')))throw new Error('room log was not exposed to gameplay client');
 
   const potionInRun=started.players[0].runInventory.find(x=>x.catalogId==='healing_potion');
   const used=await post('/api/rooms/'+code+'/use-item',{name,itemId:potionInRun.id});
