@@ -113,7 +113,7 @@ export function applyWeaponWear(item,{targetArmor=0,damageType='physical',critic
 
 export function weaponConditionModifiers(item){
   if(!item)return{accuracy:0,damageBonus:0,broken:false};
-  const d=clamp(Number(item.durability)??100,0,100),base=int(item.damageBonus||0);
+  const raw=Number(item.durability),d=clamp(Number.isFinite(raw)?raw:100,0,100),base=int(item.damageBonus||0);
   if(d<=0)return{accuracy:-4,damageBonus:0,broken:true};
   if(d<20)return{accuracy:-2,damageBonus:Math.max(0,base-3),broken:false};
   if(d<40)return{accuracy:-1,damageBonus:Math.max(0,base-2),broken:false};
