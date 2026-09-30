@@ -21,7 +21,7 @@ Source validation for this UI pass:
 
 The separate Required media CI job is still intentionally blocked by the missing production JPG/MP3 files.
 
-Current baseline: **KisAI Worlds extraction-RPG prototype 0.7.0**.
+Current baseline: **KisAI Worlds classless extraction-RPG prototype 0.8.0**.
 
 ## UX hardening 0.7.2
 
@@ -36,6 +36,29 @@ Additional client hardening completed:
 - richer unique-item inspector with serial, adaptive origin, enchantments and provenance;
 - crafting ingredient owned/required counts;
 - restrained main-menu preview motion with reduced-motion support.
+
+## Character & Combat Core 0.8
+
+Implemented:
+- classless characters with six universal attributes;
+- dynamic skills separated from attributes;
+- repeated relevant actions accumulate practice and can create/rank-up skills under a level cap;
+- server-derived HP, evasion and initiative;
+- player-authored ability fantasy translated into server-owned mechanical definitions;
+- level-up grants development points; players spend them to modify or create abilities through the budget engine;
+- deterministic hit formula: d20 + accuracy vs target evasion;
+- armor is damage absorption, not hit chance;
+- targeted attacks raise the hit threshold;
+- damaged armor sections can provide reduced effective armor;
+- weapon and armor durability/condition/defects;
+- injuries generated only after the mechanical result;
+- canonical hostile combatants with HP/evasion/armor;
+- two-way combat exchange: surviving enemies counterattack through the same resolver;
+- player HP reaching zero feeds the existing permadeath/death-drop pipeline;
+- healing consumables restore wounds and HP;
+- Narrative Engine receives committed facts after mechanics and cannot override them.
+
+Verification now includes `npm run test:combat` before the full extraction smoke.
 
 ## Current gameplay core
 
@@ -71,6 +94,7 @@ Canonical mechanics are documented in `GAMEPLAY_ECONOMY.md`.
 The source/runtime CI lane runs:
 - `npm run check`
 - `npm run validate:ui`
+- `npm run test:combat`
 - `npm run test:smoke`
 
 The smoke test now covers:
