@@ -85,7 +85,7 @@ export function applyArmorWear(item,{rawDamage=0,hpDamage=0,damageType='physical
   const factor=materialFactor(item.material||[],damageType);
   const blocked=Math.max(0,Number(rawDamage)-Number(hpDamage));
   const wear=clamp(Math.ceil((Math.max(1,rawDamage)*.55+blocked*.35)*(critical?1.35:1)*factor),1,28);
-  item.durability=clamp((Number(item.durability)??100)-wear,0,100);
+  const current=Number.isFinite(Number(item.durability))?Number(item.durability):100;item.durability=clamp(current-wear,0,100);
   item.condition=conditionLabel(item.durability);
   item.damage=Array.isArray(item.damage)?item.damage:[];
   if(rawDamage>=Math.max(4,(item.baseArmor||item.armor||0)+3)||critical){
@@ -102,7 +102,7 @@ export function applyWeaponWear(item,{targetArmor=0,damageType='physical',critic
   const hardContact=targetArmor>0&&/slash|cut|pierc|impact|physical|реж|кол|дроб/.test(String(damageType).toLowerCase());
   const factor=hardContact?materialFactor(materials,'impact'):.25;
   const wear=clamp(Math.ceil((hardContact?2:1)*factor*(critical?1.5:1)),1,8);
-  item.durability=clamp((Number(item.durability)??100)-wear,0,100);
+  const current=Number.isFinite(Number(item.durability))?Number(item.durability):100;item.durability=clamp(current-wear,0,100);
   item.condition=conditionLabel(item.durability);
   item.defects=Array.isArray(item.defects)?item.defects:[];
   if(item.durability<60&&!item.defects.includes('dulled_edge')&&/weapon/.test(item.type||item.kind||'weapon'))item.defects.push('dulled_edge');
@@ -111,12 +111,13 @@ export function applyWeaponWear(item,{targetArmor=0,damageType='physical',critic
 
 export function skillRank(character,skillName){
   if(!skillName)return 0;
+  const key=String(skillName).toLowerCase();
+  const dynamic=Array.isArray(character?.dynamicSkills)?character.dynamicSkills:[];
+  const found=dynamic.find(x=>String(x.name||x.id).toLowerCase()===key);
+  if(found)return int(found.rank||0);
   const skills=character?.skills||{};
-  if(Array.isArray(skills)){
-    const key=String(skillName).toLowerCase();
-    return int(skills.find(x=>String(x.name||x.id).toLowerCase()===key)?.rank||0);
-  }
-  return int(skills[skillName]??skills[String(skillName).toLowerCase()]??0);
+  if(Array.isArray(skills))return int(skills.find(x=>String(x.name||x.id).toLowerCase()===key)?.rank||0);
+  return int(skills[skillName]??skills[key]??0);
 }
 
 export function resolveCheck({character,attribute='perception',skill=null,dc=10,die=10,bonus=0}={}){
