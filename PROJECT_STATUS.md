@@ -46,11 +46,13 @@ Implemented:
 - server-derived HP, evasion and initiative;
 - player-authored ability fantasy translated into server-owned mechanical definitions;
 - level-up grants development points; players spend them to modify or create abilities through the budget engine;
+- the lobby exposes that development flow directly as a player-authored ability prompt;
 - deterministic hit formula: d20 + accuracy vs target evasion;
 - armor is damage absorption, not hit chance;
 - targeted attacks raise the hit threshold;
 - damaged armor sections can provide reduced effective armor;
 - weapon and armor durability/condition/defects;
+- weapon condition now changes resolved damage/accuracy instead of being cosmetic;
 - injuries generated only after the mechanical result;
 - canonical hostile combatants with HP/evasion/armor;
 - two-way combat exchange: surviving enemies counterattack through the same resolver;
