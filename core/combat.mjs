@@ -106,7 +106,19 @@ export function applyWeaponWear(item,{targetArmor=0,damageType='physical',critic
   item.condition=conditionLabel(item.durability);
   item.defects=Array.isArray(item.defects)?item.defects:[];
   if(item.durability<60&&!item.defects.includes('dulled_edge')&&/weapon/.test(item.type||item.kind||'weapon'))item.defects.push('dulled_edge');
-  return{wear,durability:item.durability,condition:item.condition};
+  if(item.durability<=0&&!item.defects.includes('broken'))item.defects.push('broken');
+  return{wear,durability:item.durability,condition:item.condition,broken:item.durability<=0};
+}
+
+
+export function weaponConditionModifiers(item){
+  if(!item)return{accuracy:0,damageBonus:0,broken:false};
+  const d=clamp(Number(item.durability)??100,0,100),base=int(item.damageBonus||0);
+  if(d<=0)return{accuracy:-4,damageBonus:0,broken:true};
+  if(d<20)return{accuracy:-2,damageBonus:Math.max(0,base-3),broken:false};
+  if(d<40)return{accuracy:-1,damageBonus:Math.max(0,base-2),broken:false};
+  if(d<60)return{accuracy:0,damageBonus:Math.max(0,base-1),broken:false};
+  return{accuracy:0,damageBonus:base,broken:false};
 }
 
 export function skillRank(character,skillName){
@@ -137,19 +149,21 @@ export function resolveAttack({
 }={}){
   if(!attacker||!defender)throw new Error('combatants_required');
   const attrs=normalizeAttributes(attacker.attributes||{}),attackAttribute=ability.attackAttribute||ability.attribute||'agility';
-  const skill=ability.skill||null,accuracy=int(ability.accuracy||0)+(attrs[attackAttribute]||0)+skillRank(attacker,skill);
+  const skill=ability.skill||null,damageType=String(ability.damageType||'physical').toLowerCase(),weaponApplies=Boolean(weapon)&&!/spatial|space|magic|psychic|fire|acid|простран|маг|псих|огн|кисл/.test(damageType),weaponMods=weaponConditionModifiers(weaponApplies?weapon:null);
+  const accuracy=int(ability.accuracy||0)+(attrs[attackAttribute]||0)+skillRank(attacker,skill)+weaponMods.accuracy;
   const evasion=targetedEvasion(defender.combat?.evasion??10,targetArea,aimed),die=clamp(int(attackDie),1,20);
   const total=die+accuracy,critical=die===20,criticalFail=die===1,hit=critical||(!criticalFail&&total>=evasion);
   const base={type:'attack',hit,critical,criticalFail,attack:{die,accuracy,total,evasion,attribute:attackAttribute,skill},targetArea,aimed,abilityId:ability.id||null,abilityName:ability.name||'Атака'};
   if(!hit)return{...base,damage:null,armor:null,injury:null,defenderHp:defender.combat?.hp_current??null};
 
-  const damageRoll=rollDice(ability.damage||'1d4',damageRng),rawDamage=Math.max(0,damageRoll.total+int(ability.damageBonus||0)+(critical?int(ability.criticalBonus||0):0));
+  const damageExpr=weaponApplies&&weapon?.baseDamage?weapon.baseDamage:(ability.damage||'1d4');
+  const damageRoll=rollDice(damageExpr,damageRng),rawDamage=Math.max(0,damageRoll.total+int(ability.damageBonus||0)+weaponMods.damageBonus+(critical?int(ability.criticalBonus||0):0));
   const armorItem=armorForArea(defender,targetArea),armorBefore=effectiveArmor(armorItem,targetArea);
   const minDamage=clamp(int(ability.minDamage||0),0,rawDamage),hpDamage=Math.max(minDamage,rawDamage-armorBefore);
   defender.combat=defender.combat||deriveCombat(defender.attributes||{},defender.level||1);
   defender.combat.hp_current=clamp((defender.combat.hp_current??defender.combat.hp_max)-hpDamage,0,defender.combat.hp_max);
   const armorWear=applyArmorWear(armorItem,{rawDamage,hpDamage,damageType:ability.damageType||'physical',critical,area:targetArea});
-  const weaponWear=applyWeaponWear(weapon,{targetArmor:armorBefore,damageType:ability.damageType||'physical',critical});
+  const weaponWear=applyWeaponWear(weaponApplies?weapon:null,{targetArmor:armorBefore,damageType:ability.damageType||'physical',critical});
   let injury=null;
   const severe=hpDamage>=Math.max(5,Math.ceil((defender.combat.hp_max||10)*.25));
   if(hpDamage>0&&(critical||severe||aimed&&hpDamage>=3)){
@@ -157,5 +171,5 @@ export function resolveAttack({
     defender.injuries=Array.isArray(defender.injuries)?defender.injuries:[];defender.injuries.push(injury);
   }
   const killed=defender.combat.hp_current<=0;if(killed)defender.status='dead';
-  return{...base,damage:{...damageRoll,raw:rawDamage,absorbed:Math.min(rawDamage,armorBefore),hp:hpDamage,type:ability.damageType||'physical'},armor:{before:armorBefore,itemId:armorItem?.id||null,wear:armorWear},weaponWear,injury,defenderHp:defender.combat.hp_current,killed};
+  return{...base,damage:{...damageRoll,raw:rawDamage,absorbed:Math.min(rawDamage,armorBefore),hp:hpDamage,type:ability.damageType||'physical'},armor:{before:armorBefore,itemId:armorItem?.id||null,wear:armorWear},weapon:{applied:weaponApplies,itemId:weaponApplies?weapon?.id||null:null,condition:weaponApplies?weaponMods:null,wear:weaponWear},weaponWear,injury,defenderHp:defender.combat.hp_current,killed};
 }
