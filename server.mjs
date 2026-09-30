@@ -42,7 +42,7 @@ const json = (res,status,body) => { const data=JSON.stringify(body); res.writeHe
 const body = req => new Promise((resolve,reject)=>{ let raw=''; req.on('data',c=>{raw+=c;if(raw.length>15_000_000){reject(new Error('body too large'));req.destroy();}}); req.on('end',()=>{try{resolve(raw?JSON.parse(raw):{});}catch(e){reject(e);}}); req.on('error',reject); });
 const saveState = () => writeJson(STATE_FILE, persisted);
 const TEST_DICE_QUEUE=String(process.env.KISAI_TEST_DICE||'').split(',').map(Number).filter(n=>Number.isInteger(n)&&n>=1&&n<=20);
-const nextD20=()=>TEST_DICE_QUEUE.length?TEST_DICE_QUEUE.shift():nextD20();
+const nextD20=()=>TEST_DICE_QUEUE.length?TEST_DICE_QUEUE.shift():crypto.randomInt(1,21);
 
 
 function runtimeConfig(){ return readJson(CONFIG_FILE, {}); }
