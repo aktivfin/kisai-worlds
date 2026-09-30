@@ -61,12 +61,19 @@ function game(){
   $('#sceneTitle').textContent=sc.title||r.scenario?.title||'Текущая сцена';$('#gmText').textContent=sc.narration||'';$('#gameScenarioLabel').textContent=(r.scenario?.title||'KISAI WORLD').toUpperCase();
   $('#party').innerHTML=(r.players||[]).map((p,i)=>'<div class="partyMember '+(p.alive===false?'dead':'')+'"><b>'+esc(p.name)+'</b><small>'+(p.character?esc(p.character.archetype):'Без героя')+'</small><span>'+(i===r.turnIndex?'ХОД':'')+'</span></div>').join('');
   if($('#myStats')&&S.profile)$('#myStats').innerHTML='<small>Твой герой</small><b>'+esc(S.profile.character?.archetype||'—')+'</b><span>'+S.profile.balance+' KAI</span>';
+  let loot=$('#sceneLoot');
+  if(loot){
+    let items=(sc.loot||[]).filter(x=>x.status==='scene');
+    loot.innerHTML=items.length?'<p class="railLabel">Лут сцены</p>'+items.map(i=>'<button class="sceneLootItem" data-id="'+i.id+'"><small>'+rarity(i.rarity)+'</small><b>'+esc(i.name)+'</b><span>Подобрать</span></button>').join(''):'';
+    $('.sceneLootItem',loot).forEach(b=>b.onclick=async()=>{try{let d=await api('/api/rooms/'+S.room.code+'/loot/'+b.dataset.id+'/claim',{method:'POST',body:JSON.stringify({name:S.name})});S.room=d.room;S.profile=d.profile;game();economy();toast('Подобрано: '+d.item.name)}catch(x){toast(x.message)}});
+  }
   music(sc.music_state||'explore');
 }
 
 function applyTurn(d){
   S.room=d.room;S.profile=d.profile;game();economy();
-  if(d.transcript)toast('Распознано: '+d.transcript.slice(0,90));
+  if(d.deathDrop?.length)toast('Персонаж погиб. В сцене осталось предметов: '+d.deathDrop.length);
+  else if(d.transcript)toast('Распознано: '+d.transcript.slice(0,90));
   else toast(d.loot?'Найдено: '+d.loot.name:(d.earned?'+'+d.earned+' KAI':'Ход выполнен'));
   if(d.speechBase64){
     try{let a=new Audio('data:'+(d.speechMime||'audio/mpeg')+';base64,'+d.speechBase64);if(S.audio)S.audio.volume=S.volume*.28;a.onended=()=>{if(S.audio)S.audio.volume=S.volume};a.play().catch(()=>{if(S.audio)S.audio.volume=S.volume})}catch{}
