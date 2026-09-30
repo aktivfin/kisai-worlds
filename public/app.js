@@ -256,6 +256,17 @@ function renderCharacterCard(c){
   $('#charCard').innerHTML='<div class="generatedCharacter"><div class="charTitle"><small>LEVEL '+c.level+' · XP '+(c.xp||0)+'</small><h3>'+esc(c.name||c.archetype)+'</h3></div><p>'+esc(c.concept)+'</p><div class="skillGrid">'+Object.entries(c.skills||{}).map(([k,v])=>'<span><b>'+esc(k)+'</b><i>'+v+'</i></span>').join('')+'</div><div class="abilityList">'+(c.abilities||[]).map(a=>'<span>✦ '+esc(a)+'</span>').join('')+'</div></div>';
 }
 function myRoomPlayer(){return S.room?.players?.find(p=>p.id===S.profile?.id)||null}
+function loadoutPreview(){
+  const pl=myRoomPlayer(),capacity=pl?.capacity||6,items=S.profile?.inventory||[];
+  let usage=0;
+  $$('.loadoutCheck:checked').forEach(c=>{
+    const i=items.find(x=>x.id===c.dataset.id),qty=Math.max(1,Number(document.querySelector('.loadoutQty[data-id="'+c.dataset.id+'"]')?.value||1));
+    if(i)usage+=(i.slotCost||1)*qty;
+  });
+  const label=$('#loadoutUsage'),save=$('#saveLoadout');
+  if(label){label.textContent=usage+' / '+capacity;label.classList.toggle('over',usage>capacity)}
+  if(save){save.disabled=usage>capacity;save.textContent=usage>capacity?'Перегруз: убери предметы':'Сохранить рюкзак'}
+}
 function renderLoadout(){
   const g=$('#loadoutGrid');if(!g||!S.profile)return;
   const pl=myRoomPlayer(),capacity=pl?.capacity||6,pending=new Map((pl?.pendingLoadout||[]).map(x=>[x.itemId,x.quantity]));
@@ -265,8 +276,9 @@ function renderLoadout(){
     return '<label class="loadoutPick"><input class="loadoutCheck" type="checkbox" data-id="'+i.id+'" '+(chosen?'checked':'')+'><div><b>'+stashLabel(i)+'</b><small>'+esc(i.kind||'equipment')+' · '+(i.slotCost||1)+' слот/шт</small></div>'+
       (i.stackable?'<input class="loadoutQty" data-id="'+i.id+'" type="number" min="1" max="'+qty+'" value="'+(chosen||1)+'">':'')+'</label>';
   }).join(''):'<div class="emptyState">На складе пока ничего нет.</div>';
-  const usage=(pl?.pendingLoadout||[]).reduce((n,q)=>{const i=items.find(x=>x.id===q.itemId);return n+(i?(i.slotCost||1)*q.quantity:0)},0);
-  if($('#loadoutUsage'))$('#loadoutUsage').textContent=usage+' / '+capacity;
+  $$('.loadoutCheck',g).forEach(x=>x.onchange=loadoutPreview);
+  $$('.loadoutQty',g).forEach(x=>x.oninput=loadoutPreview);
+  loadoutPreview();
 }
 async function saveLoadout(){
   const items=$$('.loadoutCheck:checked').map(c=>({itemId:c.dataset.id,quantity:Number(document.querySelector('.loadoutQty[data-id="'+c.dataset.id+'"]')?.value||1)}));
@@ -279,6 +291,7 @@ function renderGame(result=null){
   $('#sceneTitle').textContent=sc.title||event?.title||'Текущая сцена';
   $('#gmText').textContent=sc.narration||'';
   $('#gameScenarioLabel').textContent=(event?.title||'KISAI WORLD').toUpperCase()+' · T'+(event?.danger_tier||1);
+  const sceneArt=$('#sceneArt');if(sceneArt){sceneArt.dataset.kind=eventClass(event);sceneArt.dataset.event=event?.id||'';sceneArt.title=(event?.title||'Сцена')+' · '+(sc.title||'текущая сцена')}
   const progress=Math.round(r.progress||0);$('#runProgressText').textContent=progress+'%';$('#runProgressFill').style.width=progress+'%';$('#extractRun').disabled=progress<100||r.completed;$('#extractRun').textContent=r.completed?'Завершено':progress>=100?'Эвакуироваться':'Эвакуация '+progress+'%';
   $('#party').innerHTML=(r.players||[]).map((p,i)=>'<div class="partyMember '+(!p.alive?'dead':'')+'"><b>'+esc(p.name)+'</b><small>'+(p.character?esc(p.character.name||p.character.archetype)+' · '+p.wounds+'/3 раны':'Без героя')+'</small><span>'+(i===r.turnIndex?'ХОД':'')+'</span></div>').join('');
   const me=myRoomPlayer();
@@ -368,8 +381,24 @@ function setupMediaFallbacks(){
     }
   },true);
 }
+function setupMenuPreview(){
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches,backs=$('.homeBackdrop');
+  let active=0;
+  const paint=(file,pos='center')=>{
+    const next=backs[1-active];if(!next||!file)return;
+    next.style.backgroundImage='linear-gradient(90deg,rgba(3,9,14,.98) 0%,rgba(3,9,14,.80) 34%,rgba(3,9,14,.22) 72%,rgba(3,9,14,.68) 100%),radial-gradient(circle at 67% 42%,rgba(91,162,205,.17),transparent 27%),url("'+file+'")';
+    next.style.backgroundPosition='center,center,'+pos;next.style.backgroundSize='cover,cover,cover';
+    next.classList.add('visible');backs[active]?.classList.remove('visible');active=1-active;
+  };
+  $('.menuBtn[data-cover]').forEach(b=>{
+    const go=()=>paint(b.dataset.cover,b.dataset.coverPos||'center');
+    b.addEventListener('mouseenter',go);b.addEventListener('focus',go);
+    if(!reduce)b.addEventListener('pointermove',e=>{const r=b.getBoundingClientRect(),x=((e.clientX-r.left)/r.width-.5)*6,y=((e.clientY-r.top)/r.height-.5)*4;b.style.transform='translate('+x+'px,'+y+'px)'});
+    b.addEventListener('pointerleave',()=>b.style.transform='');
+  });
+}
 async function init(){
-  setupMediaFallbacks();
+  setupMediaFallbacks();setupMenuPreview();
   $('#playerName').value=S.name;$('#joinName').value=S.name;
   if(S.name)await loadProfile();await loadEvents();startRotationClock();await pollHealth();setInterval(pollHealth,12000);music('menu');
 
@@ -377,6 +406,7 @@ async function init(){
   $('#hostBtn').onclick=()=>show('setup');
   $('#joinBtn').onclick=()=>show('join');
   $('#economyBtn').onclick=()=>econTab('hero');
+  $('#walletPill').onclick=()=>econTab('wallet');
   $('#demoTourBtn').onclick=()=>modal('#tour');
   $('#installBtn').onclick=()=>modal('#install');
   $$('.back').forEach(b=>b.onclick=()=>show('home'));
@@ -402,7 +432,7 @@ async function init(){
     const d=await api('/api/rooms/'+S.room.code+'/character',{method:'POST',body:JSON.stringify({name:S.name,wish:$('#charWish').value,appearance:$('#charAppearance').value})});
     S.room=d.room;S.profile=d.profile;renderProfile();renderRoom();renderCharacterCard(d.character);$('#saveChar').disabled=false;toast('Новый персонаж занял слот');
   }catch(e){toast(e.message==='character_slots_full'?'Все живые слоты заняты':e.message)}};
-  $('#saveChar').onclick=()=>toast('Персонаж выбран');
+  $('#saveChar').onclick=async()=>{const id=S.profile?.activeCharacterId;if(!id||!S.room)return toast('Сначала создай или выбери героя');try{const b=$('#saveChar');b.disabled=true;const d=await api('/api/rooms/'+S.room.code+'/select-character',{method:'POST',body:JSON.stringify({name:S.name,characterId:id})});S.room=d.room;S.profile=d.profile;renderProfile();renderRoom();toast('Герой подтверждён для экспедиции')}catch(e){toast(e.message)}finally{$('#saveChar').disabled=false}};
   $('#saveLoadout').onclick=saveLoadout;
   $('#startGame').onclick=async()=>{try{
     S.room=await api('/api/rooms/'+S.room.code+'/start',{method:'POST',body:'{}'});renderGame();await wait(550);show('game');
