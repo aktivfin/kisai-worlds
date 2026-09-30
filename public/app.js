@@ -51,11 +51,11 @@ function economy(){
 async function market(){
   let a=await api('/api/market'),g=$('#marketGrid'); if(!g)return;
   g.innerHTML=a.length?a.map(l=>'<div class="marketCard">'+card(l.item,l)+'<div class="sellerRow"><span>'+esc(l.sellerName)+'</span>'+(l.sellerId===S.profile?.id?'<button class="softBtn mini cancelBtn" data-id="'+l.id+'">Снять</button>':'<button class="goldBtn mini buyBtn" data-id="'+l.id+'">Купить</button>')+'</div></div>').join(''):'<div class="emptyState">Активных лотов пока нет.</div>';
-  $('.buyBtn',g).forEach(b=>b.onclick=async e=>{e.stopPropagation();try{let d=await api('/api/market/buy',{method:'POST',body:JSON.stringify({name:S.name,listingId:b.dataset.id})});S.profile=d.profile;economy();await market();toast('Предмет куплен')}catch(x){toast(x.message)}});
-  $('.cancelBtn',g).forEach(b=>b.onclick=async e=>{e.stopPropagation();try{let d=await api('/api/market/cancel',{method:'POST',body:JSON.stringify({name:S.name,listingId:b.dataset.id})});S.profile=d.profile;economy();await market();toast('Лот снят')}catch(x){toast(x.message)}});
+  $$('.buyBtn',g).forEach(b=>b.onclick=async e=>{e.stopPropagation();try{let d=await api('/api/market/buy',{method:'POST',body:JSON.stringify({name:S.name,listingId:b.dataset.id})});S.profile=d.profile;economy();await market();toast('Предмет куплен')}catch(x){toast(x.message)}});
+  $$('.cancelBtn',g).forEach(b=>b.onclick=async e=>{e.stopPropagation();try{let d=await api('/api/market/cancel',{method:'POST',body:JSON.stringify({name:S.name,listingId:b.dataset.id})});S.profile=d.profile;economy();await market();toast('Лот снят')}catch(x){toast(x.message)}});
 }
 function bindItems(){
-  $$('.itemCard').forEach(c=>c.onclick=()=>{
+  $$$('.itemCard').forEach(c=>c.onclick=()=>{
     let i=(S.profile?.inventory||[]).find(x=>x.id===c.dataset.item);if(!i)return;
     let equipped=S.profile?.equipped?.[i.slot]===i.id,epic=['epic','relic','mythic'].includes(i.rarity);
     let visual=epic?'<div class="itemVisualCard">'+(i.visual?.url?'<img src="'+esc(i.visual.url)+'" alt="">':'<div class="visualPlaceholder"><span>✦</span><small>EPIC+ VISUAL</small></div>')+'</div>':'';
@@ -89,7 +89,7 @@ function game(){
   if(loot){
     let items=(sc.loot||[]).filter(x=>x.status==='scene');
     loot.innerHTML=items.length?'<p class="railLabel">Лут сцены</p>'+items.map(i=>'<button class="sceneLootItem" data-id="'+i.id+'"><small>'+rarity(i.rarity)+'</small><b>'+esc(i.name)+'</b><span>Подобрать</span></button>').join(''):'';
-    $('.sceneLootItem',loot).forEach(b=>b.onclick=async()=>{try{let d=await api('/api/rooms/'+S.room.code+'/loot/'+b.dataset.id+'/claim',{method:'POST',body:JSON.stringify({name:S.name})});S.room=d.room;S.profile=d.profile;game();economy();toast('Подобрано: '+d.item.name)}catch(x){toast(x.message)}});
+    $$('.sceneLootItem',loot).forEach(b=>b.onclick=async()=>{try{let d=await api('/api/rooms/'+S.room.code+'/loot/'+b.dataset.id+'/claim',{method:'POST',body:JSON.stringify({name:S.name})});S.room=d.room;S.profile=d.profile;game();economy();toast('Подобрано: '+d.item.name)}catch(x){toast(x.message)}});
   }
   music(sc.music_state||'explore');
 }
