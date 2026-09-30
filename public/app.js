@@ -406,7 +406,7 @@ function setupMediaFallbacks(){
   },true);
 }
 function setupMenuPreview(){
-  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches,backs=$('.homeBackdrop');
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches,backs=$$('.homeBackdrop');
   let active=0;
   const paint=(file,pos='center')=>{
     const next=backs[1-active];if(!next||!file)return;
@@ -414,7 +414,7 @@ function setupMenuPreview(){
     next.style.backgroundPosition='center,center,'+pos;next.style.backgroundSize='cover,cover,cover';
     next.classList.add('visible');backs[active]?.classList.remove('visible');active=1-active;
   };
-  $('.menuBtn[data-cover]').forEach(b=>{
+  $$('.menuBtn[data-cover]').forEach(b=>{
     const go=()=>paint(b.dataset.cover,b.dataset.coverPos||'center');
     b.addEventListener('mouseenter',go);b.addEventListener('focus',go);
     if(!reduce)b.addEventListener('pointermove',e=>{const r=b.getBoundingClientRect(),x=((e.clientX-r.left)/r.width-.5)*6,y=((e.clientY-r.top)/r.height-.5)*4;b.style.transform='translate('+x+'px,'+y+'px)'});
