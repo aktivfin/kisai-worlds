@@ -9,6 +9,7 @@ const S={
 };
 
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const normalize=v=>String(v??'').trim().toLowerCase().replace(/\s+/g,' ');
 const api=async(path,opts={})=>{
   let r;
   try{r=await fetch(path,{headers:{'content-type':'application/json',...(opts.headers||{})},...opts});setConnection(true)}
