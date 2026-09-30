@@ -70,6 +70,7 @@ export function materializeCharacterCore(character={}){
   if(!character.combat)character.combat=deriveCombat(attrs,character.level);
   else{const derived=deriveCombat(attrs,character.level);character.combat={...derived,...character.combat,hp_max:Math.max(character.combat.hp_max||0,derived.hp_max),hp_current:Math.min(character.combat.hp_current??derived.hp_current,Math.max(character.combat.hp_max||0,derived.hp_max))}}
   character.injuries=Array.isArray(character.injuries)?character.injuries:[];
+  character.developmentPoints=Math.max(0,Number(character.developmentPoints)||0);
   character.coreVersion='0.1';
   return character;
 }
@@ -106,4 +107,23 @@ export function recordSkillUse(character,{name,attribute='perception',success=fa
     }
   }
   return{type:'practice',skill:skill?{...skill}:null,practice:entry.count};
+}
+
+export function maxAbilitySlots(level=1){
+  return clamp(2+Math.floor((clamp(Number(level)||1,1,50)-1)/5),2,6);
+}
+
+export function evolveAbilityDefinition(character,{abilityId=null,idea='',mode='modify'}={}){
+  materializeCharacterCore(character);
+  const fantasy=String(idea||'').trim();if(!fantasy)throw new Error('ability_idea_required');
+  const abilities=character.abilities||[],balanced=balanceAbilityFantasy(fantasy,character.level||1);
+  if(mode==='new'){
+    if(abilities.length>=maxAbilitySlots(character.level))throw new Error('ability_slots_full');
+    const next={...balanced,revision:1,evolutionHistory:[{from:null,idea:fantasy,level:character.level||1}]};
+    abilities.push(next);return next;
+  }
+  const index=abilities.findIndex(x=>x.id===abilityId);if(index<0)throw new Error('ability_not_found');
+  const prev=abilities[index],history=Array.isArray(prev.evolutionHistory)?prev.evolutionHistory:[];
+  const next={...balanced,id:prev.id,revision:(Number(prev.revision)||1)+1,evolutionHistory:[...history,{from:prev.name,idea:fantasy,level:character.level||1}].slice(-12)};
+  abilities[index]=next;return next;
 }
