@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveAttack, resolveCheck, conditionLabel, effectiveArmor } from './core/combat.mjs';
-import { materializeCharacterCore, createNpcCombatant, balanceAbilityFantasy } from './core/character.mjs';
+import { materializeCharacterCore, createNpcCombatant, balanceAbilityFantasy, recordSkillUse } from './core/character.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(__dirname, 'data');
@@ -157,17 +157,18 @@ async function commitCombatTurn(r,p,action,{targetId=null,abilityId=null,targetA
   const target=(r.scene.combatants||[]).find(x=>x.id===targetId&&x.status!=='dead')||(r.scene.combatants||[]).find(x=>x.status!=='dead');if(!target)throw new Error('no_hostile_target');
   const ability=(character.abilities||[]).find(x=>x.id===abilityId)||selectAttackAbility(character,action),area=targetArea||attackArea(action),isAimed=aimed??area!=='torso';
   const weapon=equippedRunWeapon(p,player),combat=resolveAttack({attacker:character,defender:target,ability,targetArea:area,aimed:isAimed,attackDie:nextD20(),damageRng:max=>crypto.randomInt(1,max+1),weapon});
+  const skillGrowth=ability.skill?recordSkillUse(character,{name:ability.skill,attribute:ability.attackAttribute||'agility',success:combat.hit}):null;
   const narration=await narrateCombatOutcome(r,p,action,target,combat);
   const gain=combat.killed?24+(r.scenario.danger_tier||1)*4:combat.hit?8:2;r.progress=clamp((r.progress||0)+gain,0,100);
   r.scene.narration=narration;r.scene.music_state=combat.killed?'discovery':'tension';r.scene.intensity=combat.killed?.45:.82;
   r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,action,narration,combat});
   const alive=[...r.players.values()].filter(x=>x.alive);if(alive.length)r.turnIndex=(r.turnIndex+1)%alive.length;
-  saveState();return{narration,music_state:r.scene.music_state,intensity:r.scene.intensity,combat,progress:r.progress};
+  saveState();return{narration,music_state:r.scene.music_state,intensity:r.scene.intensity,combat,skillGrowth,progress:r.progress};
 }
 
 function commitTurn(r,p,action,result){
   const player=r.players.get(p.id);if(!player)throw new Error('player_not_in_room');syncActiveCharacter(p);
-  const roll=rollCheck(r.scenario,p.character,action,result,player);let woundsAdded=0,deathDrop=[];
+  const roll=rollCheck(r.scenario,p.character,action,result,player);const skillGrowth=roll?.skill?recordSkillUse(p.character,{name:roll.skill,attribute:roll.attribute||result.check_attribute||'perception',success:roll.success}):null;let woundsAdded=0,deathDrop=[];
   if(roll&&!roll.success){
     if(result.danger==='lethal')woundsAdded=roll.criticalFail?2:1;
     else if(result.danger==='risky'&&(r.scenario.danger_tier||1)>=3&&roll.criticalFail)woundsAdded=1;
@@ -188,7 +189,7 @@ function commitTurn(r,p,action,result){
   r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,action,narration:r.scene.narration,roll});
   const alive=[...r.players.values()].filter(x=>x.alive);if(alive.length)r.turnIndex=(r.turnIndex+1)%alive.length;
   if(!alive.length){r.completed=true;r.outcome='wipe';for(const item of r.scene.loot){item.status='lost'}r.scene.loot=[]}
-  saveState();return{narration:r.scene.narration,music_state:r.scene.music_state,intensity:r.scene.intensity,dice:roll,wounds:player.wounds,woundsAdded,deathDrop,drops,progress:r.progress};
+  saveState();return{narration:r.scene.narration,music_state:r.scene.music_state,intensity:r.scene.intensity,dice:roll,skillGrowth,wounds:player.wounds,woundsAdded,deathDrop,drops,progress:r.progress};
 }
 
 
