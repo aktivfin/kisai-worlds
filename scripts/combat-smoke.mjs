@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {resolveAttack,effectiveArmor,targetedEvasion,conditionLabel} from '../core/combat.mjs';
+import {resolveAttack,effectiveArmor,targetedEvasion,conditionLabel,weaponConditionModifiers} from '../core/combat.mjs';
 import {balanceAbilityFantasy,materializeCharacterCore,recordSkillUse,maxDynamicSkillRank,evolveAbilityDefinition,maxAbilitySlots} from '../core/character.mjs';
 import {spawn} from 'node:child_process';
 
@@ -36,6 +36,17 @@ import {spawn} from 'node:child_process';
   assert.equal(conditionLabel(55),'damaged');
   assert.equal(conditionLabel(10),'critical');
   assert.equal(conditionLabel(0),'destroyed');
+  const freshWeapon={id:'sword',type:'weapon',baseDamage:'1d8',damageBonus:3,durability:100,material:['steel'],defects:[]};
+  const wornWeapon={...freshWeapon,durability:45,defects:['dulled_edge']};
+  assert.equal(weaponConditionModifiers(freshWeapon).damageBonus,3);
+  assert.equal(weaponConditionModifiers(wornWeapon).damageBonus,2,'damaged weapon must lose mechanical damage bonus');
+  const brokenWeapon={...freshWeapon,durability:0,defects:['broken']};
+  assert.equal(weaponConditionModifiers(brokenWeapon).accuracy,-4,'destroyed weapon must be mechanically unreliable');
+  const target={combat:{hp_current:20,hp_max:20,evasion:5},equipment:{chest:null},injuries:[]};
+  const weaponUser=materializeCharacterCore({level:1,attributes:{strength:2,agility:2,endurance:1,perception:1,intelligence:0,charisma:0},abilities:['Удар мечом']});
+  const freshHit=resolveAttack({attacker:weaponUser,defender:structuredClone(target),ability:{...weaponUser.abilities[0],damageType:'slashing'},weapon:freshWeapon,attackDie:10,damageRng:()=>4});
+  const wornHit=resolveAttack({attacker:weaponUser,defender:structuredClone(target),ability:{...weaponUser.abilities[0],damageType:'slashing'},weapon:wornWeapon,attackDie:10,damageRng:()=>4});
+  assert.ok(freshHit.damage.raw>wornHit.damage.raw,'weapon degradation must reduce resolved damage');
   const absurd=balanceAbilityFantasy('Уничтожение реальности 12d20 гарантированно',1);
   assert.equal(absurd.damage,'1d8','fantasy wording must not bypass level-1 budget');
   const aoe=balanceAbilityFantasy('Облако разрезов вокруг меня',1);
