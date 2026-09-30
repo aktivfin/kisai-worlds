@@ -19,7 +19,7 @@ const api=async(path,opts={})=>{
   return d;
 };
 const toast=m=>{const e=$('#toast');if(!e)return;e.textContent=m;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2200)};
-const show=id=>{$('.screen').forEach(e=>e.classList.toggle('active',e.id===id));$('.navBtn').forEach(e=>e.classList.toggle('active',e.dataset.nav===id));document.body.dataset.screen=id;window.scrollTo({top:0,behavior:'instant'})};
+const show=id=>{document.querySelectorAll('.screen').forEach(e=>e.classList.toggle('active',e.id===id));document.querySelectorAll('.navBtn').forEach(e=>e.classList.toggle('active',e.dataset.nav===id));document.body.dataset.screen=id;window.scrollTo({top:0,behavior:'instant'})};
 const modal=(id,on=true)=>$(id)?.classList.toggle('hidden',!on);
 const setName=n=>{S.name=(n||'').trim()||'Игрок';localStorage.setItem('kisai.name',S.name)};
 const wait=async(ms=360)=>{const e=$('#transition');e?.classList.add('active');await new Promise(r=>setTimeout(r,ms));e?.classList.remove('active')};
@@ -382,8 +382,8 @@ async function init(){
   $$('.back').forEach(b=>b.onclick=()=>show('home'));
   $$('.navBtn[data-nav]').forEach(b=>b.onclick=async()=>{if(b.dataset.nav==='setup'){if(S.name)await loadProfile();await loadEvents()}show(b.dataset.nav)});
   $$('.navBtn[data-econ]').forEach(b=>b.onclick=()=>econTab(b.dataset.econ));
-  $('.econTab').forEach(b=>b.onclick=()=>econTab(b.dataset.tab));
-  $('.filterChip').forEach(b=>b.onclick=()=>{S.inventoryFilter=b.dataset.rarity||'all';$('.filterChip').forEach(x=>x.classList.toggle('active',x===b));renderStash()});
+  document.querySelectorAll('.econTab').forEach(b=>b.onclick=()=>econTab(b.dataset.tab));
+  document.querySelectorAll('.filterChip').forEach(b=>b.onclick=()=>{S.inventoryFilter=b.dataset.rarity||'all';document.querySelectorAll('.filterChip').forEach(x=>x.classList.toggle('active',x===b));renderStash()});
   $('#marketSearch').oninput=e=>{S.marketQuery=e.target.value;loadMarket()};
 
   $('#createRoom').onclick=async()=>{try{
