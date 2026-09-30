@@ -178,7 +178,7 @@ function ensureProfile(name='Игрок') {
 }
 function publicProfile(p){
   syncActiveCharacter(p);
-  return {id:p.id,name:p.name,balance:p.balance,farmToday:p.farmToday,inventory:p.inventory,character:p.character,alive:p.alive,
+  return {id:p.id,name:p.name,balance:p.balance,farmToday:p.farmToday,inventory:p.inventory,equipped:p.equipped||{weapon:null,armor:null,charm:null,tool:null},character:p.character,alive:p.alive,
     characterSlots:p.characterSlots,usedSlots:p.characters.filter(x=>x.status==='alive').length,characters:p.characters,activeCharacterId:p.activeCharacterId,
     eventTickets:p.eventTickets,subscription:p.subscription,transactions:persisted.transactions.filter(x=>x.profileId===p.id).slice(0,40)};
 }
@@ -267,7 +267,7 @@ async function createCharacterForProfile(p,wish,appearance){
 }
 function attachCharacterToRoom(room,p,character){
   const pl=room.players.get(p.id);if(!pl)throw new Error('player_not_in_room');
-  pl.characterId=character.id;pl.character=character;pl.ready=true;pl.alive=true;pl.wounds=0;pl.nextRollBonus=0;pl.capacity=runCapacity(character);pl.pendingLoadout=[];pl.runInventory=[];
+  pl.characterId=character.id;pl.character=character;pl.ready=true;pl.alive=true;pl.wounds=0;pl.nextRollBonus=0;pl.capacity=Math.min(Number(room.scenario?.inventory_slots)||10,runCapacity(character));pl.pendingLoadout=[];pl.runInventory=[];
 }
 function findActiveRun(profileId){
   for(const room of rooms.values())if(room.started&&!room.completed&&room.players.has(profileId))return room;
@@ -454,7 +454,7 @@ function finishRun(r){
     const uniqueCount=clamp(1+Math.floor((underfill-1)*1.5),1,3),unique=[];
     p.activeCharacterId=c.id;syncActiveCharacter(p);
     for(let i=0;i<uniqueCount;i++){const item=createLoot(p,'discovery',r.scenario,behaviorTags(r,p.id));addToStash(p,item);unique.push(item)}
-    const xp=Math.round((r.scenario.xp_base||80)*underfill),levels=grantXp(c,xp);c.runs=(c.runs||0)+1;c.wins=(c.wins||0)+1;
+    const xp=Math.round((r.scenario.xp_base||80)*underfill),levels=grantXp(c,xp);c.wins=(c.wins||0)+1;
     persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'event_complete',amount:0,eventId:r.scenario.id,xp,underfill});
     rewards.push({profileId:p.id,characterId:c.id,xp,levels,underfill,unique});
   }
