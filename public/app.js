@@ -312,13 +312,15 @@ function renderGame(result=null){
   renderSceneLoot();
   renderActionLog();
   if(result?.dice)animateDice(result.dice);
-  if(result?.combat)animateCombat(result.combat);
+  if(result?.combat)animateCombat(result.combat,result.counterattack);
   music(sc.music_state||'explore');
   renderPOV();
 }
-function animateCombat(c){
+function animateCombat(c,counter=null){
   const box=$('#diceResult');if(!box)return;box.classList.remove('success','fail','rolling');box.classList.add(c.hit?'success':'fail');
-  box.textContent=c.hit?'d20 '+c.attack.die+' + '+c.attack.accuracy+' = '+c.attack.total+' / EVA '+c.attack.evasion+' · '+(c.damage?.hp||0)+' HP':'d20 '+c.attack.die+' + '+c.attack.accuracy+' = '+c.attack.total+' / EVA '+c.attack.evasion+' · MISS';
+  const attack=c.hit?'d20 '+c.attack.die+' + '+c.attack.accuracy+' = '+c.attack.total+' / EVA '+c.attack.evasion+' · '+(c.damage?.hp||0)+' HP':'d20 '+c.attack.die+' + '+c.attack.accuracy+' = '+c.attack.total+' / EVA '+c.attack.evasion+' · MISS';
+  const reply=counter?' ↩ '+(counter.hit?('враг '+counter.attack.total+'/'+counter.attack.evasion+' · '+(counter.damage?.hp||0)+' HP'):'враг промах'):'';
+  box.textContent=attack+reply;
 }
 function animateDice(d){
   const box=$('#diceResult');if(!box)return;
@@ -355,7 +357,7 @@ function renderRunInventory(){
 }
 function renderActionLog(){
   const box=$('#log');if(!box)return;const rows=S.room?.log||[];
-  box.innerHTML=rows.length?rows.map(x=>{const mech=x.combat?'<em class="'+(x.combat.hit?'success':'fail')+'">АТАКА '+x.combat.attack.die+' + '+x.combat.attack.accuracy+' = '+x.combat.attack.total+' / EVA '+x.combat.attack.evasion+(x.combat.hit?' · DMG '+(x.combat.damage?.raw||0)+' − ARM '+(x.combat.armor?.before||0)+' = '+(x.combat.damage?.hp||0):' · ПРОМАХ')+'</em>':x.roll?'<em class="'+(x.roll.success?'success':'fail')+'">d20 '+x.roll.die+' → '+x.roll.total+' / DC '+x.roll.dc+'</em>':'';return '<div class="actionLogRow"><div><time>'+new Date(x.at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</time><b>'+esc(x.actor)+'</b></div><span>'+esc(x.action)+'</span>'+mech+'</div>'}).join(''):'<div class="emptyState compact">Ходов пока нет.</div>';
+  box.innerHTML=rows.length?rows.map(x=>{const mech=x.combat?'<em class="'+(x.combat.hit?'success':'fail')+'">АТАКА '+x.combat.attack.die+' + '+x.combat.attack.accuracy+' = '+x.combat.attack.total+' / EVA '+x.combat.attack.evasion+(x.combat.hit?' · DMG '+(x.combat.damage?.raw||0)+' − ARM '+(x.combat.armor?.before||0)+' = '+(x.combat.damage?.hp||0):' · ПРОМАХ')+(x.counterattack?' · ↩ '+(x.counterattack.hit?('ВРАГ '+x.counterattack.attack.total+'/'+x.counterattack.attack.evasion+' · '+(x.counterattack.damage?.hp||0)+' HP'):'ВРАГ ПРОМАХ'):'')+'</em>':x.roll?'<em class="'+(x.roll.success?'success':'fail')+'">d20 '+x.roll.die+' → '+x.roll.total+' / DC '+x.roll.dc+'</em>':'';return '<div class="actionLogRow"><div><time>'+new Date(x.at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</time><b>'+esc(x.actor)+'</b></div><span>'+esc(x.action)+'</span>'+mech+'</div>'}).join(''):'<div class="emptyState compact">Ходов пока нет.</div>';
 }
 async function renderPOV(){
   if(!S.room||!S.name)return;
