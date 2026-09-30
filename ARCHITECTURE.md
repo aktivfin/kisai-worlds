@@ -5,8 +5,12 @@ KisAI Worlds is currently a Windows/LAN vertical slice built around a local Node
 ## Runtime layers
 
 - **Party runtime** — rooms, players, turn order, ready state.
-- **Character runtime** — AI-assisted character creation with server-side level/power budget validation.
-- **World/GM runtime** — action resolution, structured scene state, narration and music-state selection.
+- **Character runtime** — classless CharacterState with six attributes, dynamic skills, injuries, development points and server-balanced AbilityDefinitions.
+- **Intent Interpreter** — LLM/fallback maps free-form player language to semantic intent; it never owns final numeric results.
+- **Rules Engine** — deterministic checks, hit/evasion, damage, armor absorption, ability budgets and server dice.
+- **World Simulator** — HP, injuries, equipment durability/defects, hostile combatants, canonical scene state and item/world mutations.
+- **Narrative Engine** — receives already committed mechanics and renders narration without changing outcomes.
+- **World/GM runtime** — scene progression, movement anchors, loot relevance and music-state selection.
 - **Voice runtime** — microphone capture, real-player voice relay, STT, GM response and TTS.
 - **Media runtime** — optional image generation for key scenes.
 - **Audio director** — context-driven adaptive soundtrack with crossfades and speech ducking.
@@ -15,7 +19,7 @@ KisAI Worlds is currently a Windows/LAN vertical slice built around a local Node
 
 ## Trust boundaries
 
-LLMs are used for interpretation, naming, lore, narration and creative item/scene descriptions. Numeric balance, ownership, rarity budget, market transfers, death drops and item identity must be validated by deterministic server logic.
+LLMs are used for interpretation, naming, lore, narration and creative item/scene descriptions. Numeric balance, checks, hit/miss, HP damage, armor, durability, injuries, ability budgets, ownership, rarity budget, market transfers, death drops and item identity are deterministic server authority. Narration is generated only after mechanics commit.
 
 ## Target evolution
 
