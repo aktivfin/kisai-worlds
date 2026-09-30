@@ -105,6 +105,11 @@ try{
   p=extracted.profile;
   const firstAfter=p.characters.find(x=>x.id===firstChar.id);
   if(firstAfter.runs!==1||firstAfter.wins!==1)throw new Error('run/win counters must increment once');
+  if((firstAfter.developmentPoints||0)<1)throw new Error('level-up did not grant a development point');
+  const evolvedAbility=await post('/api/profile/ability-evolve',{name,abilityId:firstAfter.abilities[0].id,mode:'modify',idea:'мощный точный вариант основной способности'});
+  if(evolvedAbility.profile.character.developmentPoints!==firstAfter.developmentPoints-1)throw new Error('ability evolution did not consume one development point');
+  if(!evolvedAbility.ability?.budgetVersion)throw new Error('ability evolution did not pass through server balance engine');
+  p=evolvedAbility.profile;
   const unique=p.inventory.find(x=>mine.unique.some(u=>u.id===x.id));
   if(!unique)throw new Error('unique completion item not in account stash');
 
