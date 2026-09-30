@@ -445,83 +445,228 @@ function personalPOV(room,profileId){
   const visible=(room.scene.geometry?.anchors||[]).filter(a=>Math.hypot((a.x||0)-pos.x,(a.y||0)-pos.y)<=radius);
   return {sceneId:room.scene.id,canonicalTitle:room.scene.title,camera:{x:pos.x,y:pos.y,z:(pos.z||0)+pos.eyeHeight,eyeHeight:pos.eyeHeight,anchorId:pos.anchorId},visibleAnchors:visible,hiddenAnchorCount:Math.max(0,(room.scene.geometry?.anchors?.length||0)-visible.length),narration:room.scene.narration,music_state:room.scene.music_state};
 }
+
+async function createPersistentCharacter(p,wish,appearance){
+  if(p.characters.filter(x=>x.status==='alive').length>=p.characterSlots)throw new Error('character_slots_full');
+  let generated=null;try{generated=await generateCharacterAI(wish,appearance)}catch(e){console.warn('character AI fallback:',e.message)}
+  const c=generated||fallbackCharacter(wish,appearance);
+  Object.assign(c,{id:c.id||id('char'),status:'alive',xp:Number(c.xp)||0,level:Number(c.level)||1,createdAt:now(),runs:0,wins:0});
+  p.characters.push(c);p.activeCharacterId=c.id;syncActiveCharacter(p);saveState();return c;
+}
+function selectCharacter(p,characterId){
+  const c=p.characters.find(x=>x.id===characterId&&x.status==='alive');if(!c)throw new Error('character_not_found_or_dead');
+  p.activeCharacterId=c.id;syncActiveCharacter(p);saveState();return c;
+}
+function makeRoomPlayer(p,scene,index=0){
+  const c=syncActiveCharacter(p);
+  return{id:p.id,name:p.name,profile:p,characterId:c?.id||null,ready:Boolean(c),alive:Boolean(c),position:spawnPosition(scene,index),wounds:0,nextRollBonus:0,capacity:runCapacity(c),pendingLoadout:[],runInventory:[]};
+}
+function findActiveRunForProfile(profileId){for(const r of rooms.values())if(r.started&&!r.completed&&r.players.has(profileId))return r;return null}
+function finishRun(r){
+  if(r.completed)throw new Error('run_completed');if((r.progress||0)<100)throw new Error('objectives_incomplete');
+  const alive=[...r.players.values()].filter(x=>x.alive);if(!alive.length)throw new Error('party_wiped');
+  const participants=Math.max(1,r.participantsAtStart||r.players.size),underfill=clamp((r.scenario.recommended_players||1)/participants,1,2.5),rewards=[];
+  for(const pl of alive){
+    const p=ensureProfile(pl.name),c=p.characters.find(x=>x.id===pl.characterId);if(!c)continue;
+    for(const item of pl.runInventory||[]){item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'extracted',eventId:r.scenario.id,characterId:c.id});addToStash(p,item)}
+    pl.runInventory=[];
+    const uniqueCount=clamp(1+Math.floor((underfill-1)*1.5),1,3),unique=[];
+    p.activeCharacterId=c.id;syncActiveCharacter(p);
+    for(let i=0;i<uniqueCount;i++){const item=createLoot(p,'discovery',r.scenario,behaviorTags(r,p.id));addToStash(p,item);unique.push(item)}
+    const xp=Math.round((r.scenario.xp_base||80)*underfill),levels=grantXp(c,xp);c.runs=(c.runs||0)+1;c.wins=(c.wins||0)+1;
+    persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'event_complete',amount:0,eventId:r.scenario.id,xp,underfill});
+    rewards.push({profileId:p.id,characterId:c.id,xp,levels,underfill,unique});
+  }
+  for(const item of r.scene.loot||[]){item.status='lost';item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'left_behind',eventId:r.scenario.id})}
+  r.scene.loot=[];r.completed=true;r.outcome='success';r.completedAt=now();saveState();return rewards;
+}
+function useRunItem(r,player,itemId){
+  const item=(player.runInventory||[]).find(x=>x.id===itemId&&x.kind==='consumable');if(!item)throw new Error('consumable_not_found');
+  const effect=item.effect||{};consumeInventoryItem(player.runInventory,item.id,1);
+  if(effect.type==='heal_wound')player.wounds=Math.max(0,(player.wounds||0)-(Number(effect.value)||1));
+  if(['roll_bonus','traversal','escape'].includes(effect.type))player.nextRollBonus=Math.max(Number(player.nextRollBonus)||0,Number(effect.value)||1);
+  saveState();return{effect,wounds:player.wounds,nextRollBonus:player.nextRollBonus||0};
+}
+function enchantItem(r,player,targetId,ingredientIds){
+  const facility=r.scenario.enchantment;if(!facility)throw new Error('event_has_no_enchanting');
+  if(player.position?.anchorId!==facility.anchor_id)throw new Error('not_at_enchantment_facility');
+  const target=(player.runInventory||[]).find(x=>x.id===targetId&&x.kind==='equipment');if(!target)throw new Error('equipment_not_in_run_inventory');
+  target.enchantments=Array.isArray(target.enchantments)?target.enchantments:[];
+  if(target.enchantments.length>=1+Math.floor((facility.tier||1)/2))throw new Error('enchantment_slots_full');
+  const ids=[...new Set((ingredientIds||[]).map(String))];if(!ids.length||ids.length>(facility.max_ingredients||1))throw new Error('invalid_ingredients');
+  const ingredients=ids.map(itemId=>{
+    const item=player.runInventory.find(x=>x.id===itemId),def=item&&crafting.materials[item.catalogId];
+    if(!item||def?.kind!=='enchant_ingredient')throw new Error('invalid_enchant_ingredient');return{item,def};
+  });
+  for(const x of ingredients)consumeInventoryItem(player.runInventory,x.item.id,1);
+  const skill=Math.max(Number(player.character?.skills?.Интеллект)||2,Number(player.character?.skills?.Воля)||2),die=crypto.randomInt(1,21),modifier=skill-2+Math.floor(((player.character?.level)||1)-1)/5,dc=facility.challenge_dc||13;
+  const success=die===20||(die!==1&&die+modifier>=dc),roll={die,skill:'Интеллект/Воля',modifier,dc,total:die+modifier,success,critical:die===20,criticalFail:die===1};
+  target.provenance=target.provenance||[];
+  if(success){
+    const quality=clamp((facility.tier||1)+(roll.critical?1:0),1,5);
+    const effects=ingredients.map(x=>({key:x.def.enchant.key,label:x.def.enchant.label,value:x.def.enchant.base_value*quality}));
+    const ench={id:id('ench'),at:now(),eventId:r.scenario.id,facility:facility.label,forgeTier:facility.tier,quality,effects};
+    target.enchantments.push(ench);target.provenance.push({at:now(),type:'enchanted',eventId:r.scenario.id,facility:facility.label,quality,effects});
+  }else target.provenance.push({at:now(),type:'enchant_failed',eventId:r.scenario.id,facility:facility.label});
+  saveState();return{roll,item:target,success};
+}
+
 function getRoom(c){ return rooms.get(String(c||'').toUpperCase()); }
 function roomView(r){ return {code:r.code,scenario:r.scenario,event:r.scenario,hostId:r.hostId,started:r.started,completed:Boolean(r.completed),outcome:r.outcome||null,turnIndex:r.turnIndex,progress:r.progress||0,participantsAtStart:r.participantsAtStart||0,scene:r.scene,players:[...r.players.values()].map(x=>({id:x.id,name:x.name,ready:x.ready,characterId:x.characterId,character:x.profile.character,alive:x.alive!==false,position:x.position,wounds:x.wounds||0,capacity:x.capacity||6,runUsage:inventoryUsage(x.runInventory||[]),runInventory:x.runInventory||[],pendingLoadout:x.pendingLoadout||[]}))}; }
 
 async function api(req,res,u){
-  try {
-    if(req.method==='GET'&&u.pathname==='/api/health') return json(res,200,{ok:true,version:'0.6.1',llm:providerReady('llm'),stt:providerReady('stt'),tts:providerReady('tts')});
-    if(req.method==='GET'&&u.pathname==='/api/scenarios') return json(res,200,scenarios);
-    const itemMedia=u.pathname.match(/^\/api\/item-media\/([a-zA-Z0-9_-]+)\.png$/);
-    if(req.method==='GET'&&itemMedia){const file=path.join(ITEM_MEDIA_DIR,itemMedia[1]+'.png');if(!fs.existsSync(file)){res.writeHead(404);return res.end('Not found');}res.writeHead(200,{'content-type':'image/png','cache-control':'private, max-age=86400'});return fs.createReadStream(file).pipe(res);}
-    const itemVisual=u.pathname.match(/^\/api\/items\/([^/]+)\/visual$/);
-    if(req.method==='POST'&&itemVisual){const b=await body(req);ensureProfile(b.name);const item=findItemById(itemVisual[1]);if(!item)return json(res,404,{error:'item_not_found'});try{return json(res,200,{visual:await ensureItemVisual(item)})}catch(e){return json(res,e.message==='image_not_configured'?409:422,{error:e.message});}}
+  try{
+    if(req.method==='GET'&&u.pathname==='/api/health')return json(res,200,{ok:true,version:'0.7.0-extraction-core',llm:providerReady('llm'),stt:providerReady('stt'),tts:providerReady('tts')});
+    if(req.method==='GET'&&(u.pathname==='/api/events'||u.pathname==='/api/scenarios'))return json(res,200,currentEvents());
+    if(req.method==='GET'&&u.pathname==='/api/event-catalog')return json(res,200,scenarios);
+    if(req.method==='GET'&&u.pathname==='/api/crafting')return json(res,200,crafting);
+    if(req.method==='GET'&&u.pathname==='/api/store')return json(res,200,storeView());
 
-    if(req.method==='GET'&&u.pathname==='/api/config') {
-      const c=readJson(CONFIG_FILE,{});
-      const scrub=o=>Object.fromEntries(Object.entries(o||{}).map(([k,v])=>[k,/key/i.test(k)?(v?'••••••':''):v]));
+    const itemMedia=u.pathname.match(/^\/api\/item-media\/([a-zA-Z0-9_-]+)\.png$/);
+    if(req.method==='GET'&&itemMedia){const file=path.join(ITEM_MEDIA_DIR,itemMedia[1]+'.png');if(!fs.existsSync(file)){res.writeHead(404);return res.end('Not found')}res.writeHead(200,{'content-type':'image/png','cache-control':'private, max-age=86400'});return fs.createReadStream(file).pipe(res)}
+    const itemVisual=u.pathname.match(/^\/api\/items\/([^/]+)\/visual$/);
+    if(req.method==='POST'&&itemVisual){const b=await body(req);ensureProfile(b.name);const item=findItemById(itemVisual[1]);if(!item)return json(res,404,{error:'item_not_found'});try{return json(res,200,{visual:await ensureItemVisual(item)})}catch(e){return json(res,e.message==='image_not_configured'?409:422,{error:e.message})}}
+
+    if(req.method==='GET'&&u.pathname==='/api/config'){
+      const c=readJson(CONFIG_FILE,{}),scrub=o=>Object.fromEntries(Object.entries(o||{}).map(([k,v])=>[k,/key/i.test(k)?(v?'••••••':''):v]));
       return json(res,200,{...c,llm:scrub(c.llm),stt:scrub(c.stt),tts:scrub(c.tts),image:scrub(c.image)});
     }
-    if(req.method==='POST'&&u.pathname==='/api/config') {
-      const incoming=await body(req), current=readJson(CONFIG_FILE,{});
-      for(const section of ['llm','stt','tts','image']) if(incoming[section]) current[section]={...(current[section]||{}),...incoming[section],api_key:incoming[section].api_key?.includes('•')?current[section]?.api_key:incoming[section].api_key};
-      if(Number(incoming.port)) current.port=Number(incoming.port);
-      writeJson(CONFIG_FILE,current); return json(res,200,{ok:true});
+    if(req.method==='POST'&&u.pathname==='/api/config'){
+      const incoming=await body(req),current=readJson(CONFIG_FILE,{});
+      for(const section of ['llm','stt','tts','image'])if(incoming[section])current[section]={...(current[section]||{}),...incoming[section],api_key:incoming[section].api_key?.includes('•')?current[section]?.api_key:incoming[section].api_key};
+      if(Number(incoming.port))current.port=Number(incoming.port);writeJson(CONFIG_FILE,current);return json(res,200,{ok:true});
     }
-    if(req.method==='POST'&&u.pathname==='/api/rooms') {
-      const b=await body(req), scenario=scenarios.find(s=>s.id===b.scenarioId)||scenarios[0], profile=ensureProfile(b.name);
-      const room={code:code(),scenario,hostId:profile.id,started:false,turnIndex:0,players:new Map(),scene:createScene(scenario,scenario?.opening||''),log:[]};room.scene.music_state='lobby';
-      room.players.set(profile.id,{id:profile.id,name:profile.name,ready:false,profile,position:spawnPosition(room.scene,0)}); rooms.set(room.code,room); return json(res,201,{room:roomView(room),profile:publicProfile(profile)});
+
+    if(req.method==='GET'&&u.pathname==='/api/profile'){const p=ensureProfile(u.searchParams.get('name'));return json(res,200,publicProfile(p))}
+    if(req.method==='POST'&&u.pathname==='/api/profile/character'){
+      const b=await body(req),p=ensureProfile(b.name);try{return json(res,201,{character:await createPersistentCharacter(p,b.wish,b.appearance),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
+    }
+    if(req.method==='POST'&&u.pathname==='/api/profile/select-character'){
+      const b=await body(req),p=ensureProfile(b.name);try{selectCharacter(p,b.characterId);return json(res,200,publicProfile(p))}catch(e){return json(res,409,{error:e.message})}
+    }
+    if(req.method==='POST'&&u.pathname==='/api/profile/craft'){
+      const b=await body(req),p=ensureProfile(b.name);if(findActiveRunForProfile(p.id))return json(res,409,{error:'cannot_craft_during_run'});
+      try{return json(res,200,{item:craftForProfile(p,b.recipeId,b.quantity),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
+    }
+
+    if(req.method==='POST'&&u.pathname==='/api/rooms'){
+      const b=await body(req),event=activeEvent(b.eventId||b.scenarioId);if(!event)return json(res,409,{error:'event_not_active'});
+      const p=ensureProfile(b.name);if(b.characterId){try{selectCharacter(p,b.characterId)}catch(e){return json(res,409,{error:e.message})}}
+      const scene=createScene(event,event.opening||'');scene.music_state='lobby';
+      const room={code:code(),scenario:event,hostId:p.id,started:false,completed:false,outcome:null,turnIndex:0,progress:0,participantsAtStart:0,players:new Map(),scene,log:[],createdAt:now()};
+      room.players.set(p.id,makeRoomPlayer(p,scene,0));rooms.set(room.code,room);return json(res,201,{room:roomView(room),profile:publicProfile(p),access:accessStatus(p,event)});
     }
     const join=u.pathname.match(/^\/api\/rooms\/([^/]+)\/join$/);
-    if(req.method==='POST'&&join){const r=getRoom(join[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);r.players.set(p.id,{id:p.id,name:p.name,ready:false,profile:p,position:spawnPosition(r.scene,r.players.size)});return json(res,200,{room:roomView(r),profile:publicProfile(p)});}
-    const roomGet=u.pathname.match(/^\/api\/rooms\/([^/]+)$/);
-    if(req.method==='GET'&&roomGet){const r=getRoom(roomGet[1]);return r?json(res,200,roomView(r)):json(res,404,{error:'room_not_found'});}
-    const povGet=u.pathname.match(/^\/api\/rooms\/([^/]+)\/pov$/);
-    if(req.method==='GET'&&povGet){const r=getRoom(povGet[1]);if(!r)return json(res,404,{error:'room_not_found'});const p=ensureProfile(u.searchParams.get('name')),view=personalPOV(r,p.id);return view?json(res,200,view):json(res,404,{error:'player_not_in_room'});}
-
-    const char=u.pathname.match(/^\/api\/rooms\/([^/]+)\/character$/);
-    if(req.method==='POST'&&char){const r=getRoom(char[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);let generated=null;try{generated=await generateCharacterAI(b.wish,b.appearance)}catch(e){console.warn('character AI fallback:',e.message)}p.character=generated||fallbackCharacter(b.wish,b.appearance);p.alive=true;saveState();const rp=r.players.get(p.id);if(rp)rp.ready=true;return json(res,200,{character:p.character,profile:publicProfile(p),room:roomView(r),ai:Boolean(generated)});}
-    const start=u.pathname.match(/^\/api\/rooms\/([^/]+)\/start$/);
-    if(req.method==='POST'&&start){const r=getRoom(start[1]);if(!r)return json(res,404,{error:'room_not_found'});r.started=true;r.scene.music_state='explore';return json(res,200,roomView(r));}
-    const turn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/turn$/);
-    if(req.method==='POST'&&turn){const r=getRoom(turn[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);if(!p.alive)return json(res,409,{error:'character_dead'});const action=String(b.action||'осматривается').slice(0,1200);let result=null;try{result=await resolveGMAI(r,action,p)}catch(e){console.warn('GM AI fallback:',e.message)}result=result||fallbackGM(r,action,p);const committed=commitTurn(r,p,action,result);return json(res,200,{...result,...committed,room:roomView(r),profile:publicProfile(p),ai:Boolean(result&&providerReady('llm'))});}
-    
-    const voiceTurn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/voice-turn$/);
-    if(req.method==='POST'&&voice){
-      const r=getRoom(voiceTurn[1]);if(!r)return json(res,404,{error:'room_not_found'});
-      const b=await body(req),p=ensureProfile(b.name);if(!p.alive)return json(res,409,{error:'character_dead'});
-      const action=await transcribeAudio(b.audioBase64,b.mimeType||'audio/webm');if(!action)return json(res,422,{error:'empty_transcript'});
-      let result=null;try{result=await resolveGMAI(r,action,p)}catch(e){console.warn('GM AI fallback:',e.message)}result=result||fallbackGM(r,action,p);
-      const committed=commitTurn(r,p,action,result);let speechBase64=null;try{speechBase64=await synthesizeSpeech(result.narration)}catch(e){console.warn('TTS fallback:',e.message)}
-      return json(res,200,{transcript:action,...result,...committed,room:roomView(r),profile:publicProfile(p),speechBase64,speechMime:'audio/mpeg'});
+    if(req.method==='POST'&&join){
+      const r=getRoom(join[1]);if(!r)return json(res,404,{error:'room_not_found'});if(r.started)return json(res,409,{error:'run_already_started'});if(r.players.size>=5)return json(res,409,{error:'party_full'});
+      const b=await body(req),p=ensureProfile(b.name);if(b.characterId){try{selectCharacter(p,b.characterId)}catch(e){return json(res,409,{error:e.message})}}
+      r.players.set(p.id,makeRoomPlayer(p,r.scene,r.players.size));return json(res,200,{room:roomView(r),profile:publicProfile(p),access:accessStatus(p,r.scenario)});
     }
-        const claimLoot=u.pathname.match(/^\/api\/rooms\/([^/]+)\/loot\/([^/]+)\/claim$/);
+    const roomGet=u.pathname.match(/^\/api\/rooms\/([^/]+)$/);
+    if(req.method==='GET'&&roomGet){const r=getRoom(roomGet[1]);return r?json(res,200,roomView(r)):json(res,404,{error:'room_not_found'})}
+    const pov=u.pathname.match(/^\/api\/rooms\/([^/]+)\/pov$/);
+    if(req.method==='GET'&&pov){const r=getRoom(pov[1]);if(!r)return json(res,404,{error:'room_not_found'});const p=ensureProfile(u.searchParams.get('name')),view=personalPOV(r,p.id);return view?json(res,200,view):json(res,404,{error:'player_not_in_room'})}
+
+    const roomChar=u.pathname.match(/^\/api\/rooms\/([^/]+)\/character$/);
+    if(req.method==='POST'&&roomChar){
+      const r=getRoom(roomChar[1]);if(!r)return json(res,404,{error:'room_not_found'});if(r.started)return json(res,409,{error:'run_already_started'});
+      const b=await body(req),p=ensureProfile(b.name);try{
+        const c=await createPersistentCharacter(p,b.wish,b.appearance),pl=r.players.get(p.id);if(pl)Object.assign(pl,{characterId:c.id,ready:true,alive:true,wounds:0,capacity:runCapacity(c)});
+        return json(res,200,{character:c,profile:publicProfile(p),room:roomView(r)});
+      }catch(e){return json(res,409,{error:e.message})}
+    }
+    const selectRoomChar=u.pathname.match(/^\/api\/rooms\/([^/]+)\/select-character$/);
+    if(req.method==='POST'&&selectRoomChar){
+      const r=getRoom(selectRoomChar[1]);if(!r)return json(res,404,{error:'room_not_found'});if(r.started)return json(res,409,{error:'run_already_started'});
+      const b=await body(req),p=ensureProfile(b.name);try{
+        const c=selectCharacter(p,b.characterId),pl=r.players.get(p.id);if(!pl)return json(res,404,{error:'player_not_in_room'});
+        Object.assign(pl,{characterId:c.id,ready:true,alive:true,wounds:0,capacity:runCapacity(c),pendingLoadout:[]});return json(res,200,{room:roomView(r),profile:publicProfile(p)});
+      }catch(e){return json(res,409,{error:e.message})}
+    }
+    const loadout=u.pathname.match(/^\/api\/rooms\/([^/]+)\/loadout$/);
+    if(req.method==='POST'&&loadout){
+      const r=getRoom(loadout[1]);if(!r)return json(res,404,{error:'room_not_found'});if(r.started)return json(res,409,{error:'run_already_started'});
+      const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!p.character)return json(res,409,{error:'character_required'});
+      const requests=Array.isArray(b.items)?b.items.map(x=>({itemId:String(x.itemId),quantity:clamp(Math.floor(Number(x.quantity)||1),1,99)})):[];
+      let usage=0;
+      for(const q of requests){const item=p.inventory.find(x=>x.id===q.itemId);if(!item||!canTakeFromStash(p,q.itemId,q.quantity))return json(res,409,{error:'invalid_loadout_item'});usage+=stackCost(item,q.quantity)}
+      if(usage>pl.capacity)return json(res,409,{error:'run_inventory_over_capacity',usage,capacity:pl.capacity});pl.pendingLoadout=requests;
+      return json(res,200,{room:roomView(r),usage,capacity:pl.capacity});
+    }
+    const start=u.pathname.match(/^\/api\/rooms\/([^/]+)\/start$/);
+    if(req.method==='POST'&&start){
+      const r=getRoom(start[1]);if(!r)return json(res,404,{error:'room_not_found'});if(r.started)return json(res,409,{error:'run_already_started'});
+      const players=[...r.players.values()];if(!players.length)return json(res,409,{error:'empty_party'});
+      for(const pl of players){
+        const p=ensureProfile(pl.name),c=p.characters.find(x=>x.id===pl.characterId&&x.status==='alive');if(!c)return json(res,409,{error:'all_players_need_alive_character',player:pl.name});
+        if(!accessStatus(p,r.scenario).ok)return json(res,402,{error:'payment_required',player:pl.name,event:r.scenario.id});
+        for(const q of pl.pendingLoadout||[])if(!canTakeFromStash(p,q.itemId,q.quantity))return json(res,409,{error:'loadout_changed',player:pl.name});
+      }
+      for(const pl of players){
+        const p=ensureProfile(pl.name);consumeAccess(p,r.scenario);pl.runInventory=(pl.pendingLoadout||[]).map(q=>takeFromStash(p,q.itemId,q.quantity));pl.alive=true;pl.wounds=0;
+        for(const item of pl.runInventory){item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'entered_event',eventId:r.scenario.id,characterId:pl.characterId})}
+      }
+      r.started=true;r.participantsAtStart=players.length;r.startedAt=now();r.scene.music_state='explore';saveState();return json(res,200,roomView(r));
+    }
+
+    const turn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/turn$/);
+    if(req.method==='POST'&&turn){
+      const r=getRoom(turn[1]);if(!r)return json(res,404,{error:'room_not_found'});if(!r.started||r.completed)return json(res,409,{error:'run_not_active'});
+      const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead_or_missing'});
+      p.activeCharacterId=pl.characterId;syncActiveCharacter(p);const action=String(b.action||'осматриваюсь').slice(0,1200),proposal=await resolveGMAI(r,action,p),committed=commitTurn(r,p,action,proposal);
+      return json(res,200,{...proposal,...committed,room:roomView(r),profile:publicProfile(p)});
+    }
+    const voiceTurn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/voice-turn$/);
+    if(req.method==='POST'&&voiceTurn){
+      const r=getRoom(voiceTurn[1]);if(!r)return json(res,404,{error:'room_not_found'});if(!r.started||r.completed)return json(res,409,{error:'run_not_active'});
+      const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead_or_missing'});
+      p.activeCharacterId=pl.characterId;syncActiveCharacter(p);const action=await transcribeAudio(b.audioBase64,b.mimeType||'audio/webm');if(!action)return json(res,422,{error:'empty_transcript'});
+      const proposal=await resolveGMAI(r,action,p),committed=commitTurn(r,p,action,proposal);let speechBase64=null;try{speechBase64=await synthesizeSpeech(committed.narration)}catch(e){console.warn('TTS fallback:',e.message)}
+      return json(res,200,{...proposal,...committed,room:roomView(r),profile:publicProfile(p),transcript:action,speechBase64,speechMime:'audio/mpeg'});
+    }
+    const claim=u.pathname.match(/^\/api\/rooms\/([^/]+)\/loot\/([^/]+)\/claim$/);
     if(req.method==='POST'&&claim){
-      const r=getRoom(claim[1]);if(!r)return json(res,404,{error:'room_not_found'});
-      const b=await body(req),p=ensureProfile(b.name);if(!p.alive)return json(res,409,{error:'character_dead'});
-      const idx=(r.scene.loot||[]).findIndex(x=>x.id===claim[2]&&x.status==='scene');if(idx<0)return json(res,404,{error:'loot_not_found'});
-      const [item]=r.scene.loot.splice(idx,1);item.status='owned';item.ownerId=p.id;item.provenance.push({at:now(),type:'claimed',owner:p.id,sceneId:r.scene.id});p.inventory.push(item);saveState();
+      const r=getRoom(claim[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead_or_missing'});
+      const idx=(r.scene.loot||[]).findIndex(x=>x.id===claim[2]&&x.status==='scene');if(idx<0)return json(res,404,{error:'loot_not_found'});const item=r.scene.loot[idx];
+      if(inventoryUsage(pl.runInventory)+stackCost(item)>pl.capacity)return json(res,409,{error:'run_inventory_full'});
+      r.scene.loot.splice(idx,1);item.status='run';item.ownerId=p.id;item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'claimed_in_event',eventId:r.scenario.id,characterId:pl.characterId});pl.runInventory.push(item);saveState();
       return json(res,200,{item,room:roomView(r),profile:publicProfile(p)});
     }
-        if(req.method==='POST'&&u.pathname==='/api/profile/equip'){
-      const b=await body(req),p=ensureProfile(b.name);if(!p.alive)return json(res,409,{error:'character_dead'});
-      const item=p.inventory.find(x=>x.id===b.itemId);if(!item)return json(res,404,{error:'item_not_found'});
-      if(!['weapon','armor','charm','tool'].includes(item.slot))return json(res,409,{error:'invalid_slot'});
-      p.equipped[item.slot]=item.id;saveState();return json(res,200,publicProfile(p));
+    const use=u.pathname.match(/^\/api\/rooms\/([^/]+)\/use-item$/);
+    if(req.method==='POST'&&use){
+      const r=getRoom(use[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead_or_missing'});
+      try{return json(res,200,{...useRunItem(r,pl,b.itemId),room:roomView(r),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
     }
-    if(req.method==='POST'&&u.pathname==='/api/profile/unequip'){
-      const b=await body(req),p=ensureProfile(b.name),slot=String(b.slot||'');
-      if(!['weapon','armor','charm','tool'].includes(slot))return json(res,409,{error:'invalid_slot'});
-      p.equipped[slot]=null;saveState();return json(res,200,publicProfile(p));
+    const enchant=u.pathname.match(/^\/api\/rooms\/([^/]+)\/enchant$/);
+    if(req.method==='POST'&&enchant){
+      const r=getRoom(enchant[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead_or_missing'});
+      try{return json(res,200,{...enchantItem(r,pl,b.targetId,b.ingredientIds),room:roomView(r),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
     }
-    if(req.method==='GET'&&u.pathname==='/api/profile'){const p=ensureProfile(u.searchParams.get('name'));return json(res,200,publicProfile(p));}
-    if(req.method==='GET'&&u.pathname==='/api/market') return json(res,200,persisted.market.filter(x=>x.status==='active'));
-    if(req.method==='POST'&&u.pathname==='/api/market/list'){const b=await body(req),p=ensureProfile(b.name),idx=p.inventory.findIndex(x=>x.id===b.itemId);if(idx<0)return json(res,404,{error:'item_not_found'});const item=p.inventory[idx];if(Object.values(p.equipped||{}).includes(item.id))p.equipped[item.slot]=null;p.inventory.splice(idx,1);item.status='escrow';const listing={id:id('listing'),item,sellerId:p.id,sellerName:p.name,price:clamp(Number(b.price)||1,1,1_000_000),status:'active',createdAt:now()};persisted.market.push(listing);persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'market_list',amount:0,itemId:item.id,price:listing.price});saveState();return json(res,201,listing);}
-    if(req.method==='POST'&&u.pathname==='/api/market/buy'){const b=await body(req),buyer=ensureProfile(b.name),l=persisted.market.find(x=>x.id===b.listingId&&x.status==='active');if(!l)return json(res,404,{error:'listing_not_found'});if(l.sellerId===buyer.id)return json(res,409,{error:'own_listing'});if(buyer.balance<l.price)return json(res,409,{error:'insufficient_balance'});const seller=Object.values(persisted.profiles).find(x=>x.id===l.sellerId),net=Math.floor(l.price*.975),fee=l.price-net;buyer.balance-=l.price;if(seller)seller.balance+=net;l.status='sold';l.item.status='owned';l.item.ownerId=buyer.id;l.item.provenance.push({at:now(),type:'trade',from:l.sellerId,to:buyer.id,price:l.price});buyer.inventory.push(l.item);persisted.transactions.unshift({id:id('tx'),at:now(),profileId:buyer.id,type:'market_buy',amount:-l.price,itemId:l.item.id,counterparty:l.sellerId},{id:id('tx'),at:now(),profileId:l.sellerId,type:'market_sale',amount:net,itemId:l.item.id,counterparty:buyer.id,fee});saveState();return json(res,200,{listing:l,profile:publicProfile(buyer)});}
-    if(req.method==='POST'&&u.pathname==='/api/market/cancel'){const b=await body(req),p=ensureProfile(b.name),l=persisted.market.find(x=>x.id===b.listingId&&x.status==='active'&&x.sellerId===p.id);if(!l)return json(res,404,{error:'listing_not_found'});l.status='cancelled';l.item.status='owned';p.inventory.push(l.item);persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'market_cancel',amount:0,itemId:l.item.id});saveState();return json(res,200,{profile:publicProfile(p)});}
+    const extract=u.pathname.match(/^\/api\/rooms\/([^/]+)\/extract$/);
+    if(req.method==='POST'&&extract){
+      const r=getRoom(extract[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);if(!r.players.has(p.id))return json(res,404,{error:'player_not_in_room'});
+      try{return json(res,200,{rewards:finishRun(r),room:roomView(r),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message,progress:r.progress||0})}
+    }
+
+    if(req.method==='GET'&&u.pathname==='/api/market')return json(res,200,persisted.market.filter(x=>x.status==='active'));
+    if(req.method==='POST'&&u.pathname==='/api/market/list'){
+      const b=await body(req),p=ensureProfile(b.name);if(findActiveRunForProfile(p.id))return json(res,409,{error:'cannot_trade_during_run'});
+      const idx=p.inventory.findIndex(x=>x.id===b.itemId&&x.kind==='equipment');if(idx<0)return json(res,404,{error:'equipment_not_found'});
+      const item=p.inventory.splice(idx,1)[0];item.status='escrow';const listing={id:id('listing'),item,sellerId:p.id,sellerName:p.name,price:clamp(Number(b.price)||1,1,1_000_000),status:'active',createdAt:now()};
+      persisted.market.push(listing);persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'market_list',amount:0,itemId:item.id,price:listing.price});saveState();return json(res,201,listing);
+    }
+    if(req.method==='POST'&&u.pathname==='/api/market/buy'){
+      const b=await body(req),buyer=ensureProfile(b.name);if(findActiveRunForProfile(buyer.id))return json(res,409,{error:'cannot_trade_during_run'});
+      const l=persisted.market.find(x=>x.id===b.listingId&&x.status==='active');if(!l)return json(res,404,{error:'listing_not_found'});if(l.sellerId===buyer.id)return json(res,409,{error:'own_listing'});if(buyer.balance<l.price)return json(res,409,{error:'insufficient_balance'});
+      const seller=Object.values(persisted.profiles).map(migrateProfile).find(x=>x.id===l.sellerId),net=Math.floor(l.price*.975),fee=l.price-net;buyer.balance-=l.price;if(seller)seller.balance+=net;l.status='sold';l.item.provenance=l.item.provenance||[];l.item.provenance.push({at:now(),type:'trade',from:l.sellerId,to:buyer.id,price:l.price});addToStash(buyer,l.item);
+      persisted.transactions.unshift({id:id('tx'),at:now(),profileId:buyer.id,type:'market_buy',amount:-l.price,itemId:l.item.id,counterparty:l.sellerId},{id:id('tx'),at:now(),profileId:l.sellerId,type:'market_sale',amount:net,itemId:l.item.id,counterparty:buyer.id,fee});saveState();return json(res,200,{listing:l,profile:publicProfile(buyer)});
+    }
+    if(req.method==='POST'&&u.pathname==='/api/market/cancel'){
+      const b=await body(req),p=ensureProfile(b.name),l=persisted.market.find(x=>x.id===b.listingId&&x.status==='active'&&x.sellerId===p.id);if(!l)return json(res,404,{error:'listing_not_found'});
+      l.status='cancelled';addToStash(p,l.item);persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'market_cancel',amount:0,itemId:l.item.id});saveState();return json(res,200,{profile:publicProfile(p)});
+    }
     return json(res,404,{error:'not_found'});
-  } catch(e){ console.error(e); return json(res,500,{error:'server_error',message:e.message}); }
+  }catch(e){console.error(e);return json(res,500,{error:'server_error',message:e.message})}
 }
 
 function staticFile(req,res,u){
