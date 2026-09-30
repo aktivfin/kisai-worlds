@@ -70,14 +70,19 @@ async function generateCharacterAI(wish,appearance){
   return {...base,archetype:String(x.archetype||base.archetype).slice(0,48),concept:String(x.concept||wish||base.concept).slice(0,400),skills,abilities:Array.isArray(x.abilities)?x.abilities.slice(0,2).map(v=>String(v).slice(0,180)):base.abilities,weakness:String(x.weakness||base.weakness).slice(0,180)};
 }
 async function resolveGMAI(room,action,actor){
-  if(!providerReady('llm')) return null;
-  const recent=room.log.slice(0,8).reverse().map(x=>x.actor+': '+x.action+' -> '+x.narration).join('\\n');
-  const system='You are the authoritative GM runtime for KisAI Worlds. Resolve one player action using only established scene facts. Never grant impossible numeric power because the player asks for it. Character death is allowed only when it is a direct, clearly justified consequence already supported by the scene. Return ONLY JSON: {"narration":string,"music_state":"explore|tavern|investigation|discovery|tension|chase|ritual|abyss|dread|hell|boss|grief","intensity":0..1,"scene_transition":boolean,"loot":boolean,"actor_dies":boolean,"move_to":string|null}. move_to may only be an anchor id from the canonical geometry. Keep narration under 650 chars.';
-  const user='Scenario: '+room.scenario?.title+'\\nOpening: '+room.scenario?.opening+'\\nCurrent scene: '+room.scene?.narration+'\\nRecent history:\\n'+recent+'\\nActor: '+actor.name+' / '+JSON.stringify(actor.character||{})+'\\nAction: '+action;
-  const text=await openAIChat([{role:'system',content:system},{role:'user',content:user}],.65);
-  const x=safeJsonText(text); if(!x)return null;
-  const allowed=['explore','tavern','investigation','discovery','tension','chase','ritual','abyss','dread','hell','boss','grief'];
-  return {narration:String(x.narration||'').slice(0,900)||fallbackGM(room,action,actor).narration,music_state:allowed.includes(x.music_state)?x.music_state:classifyMusic(x.narration||action),intensity:clamp(Number(x.intensity)||.4,0,1),scene_transition:Boolean(x.scene_transition),loot:Boolean(x.loot),actor_dies:Boolean(x.actor_dies),move_to:typeof x.move_to==='string'?x.move_to:null};
+  const player=room.players.get(actor.id),fallback=fallbackGM(room,action,actor);
+  if(!providerReady('llm'))return fallback;
+  const recent=room.log.slice(0,8).reverse().map(x=>x.actor+': '+x.action+' -> '+x.narration).join('\n');
+  const system='You are a GM planner. Event difficulty and dice are server-controlled. Return ONLY JSON: {"check_required":boolean,"check_skill":"Сила|Ловкость|Интеллект|Воля|Восприятие","difficulty_shift":-1|0|1,"danger":"safe|risky|lethal","success_narration":string,"failure_narration":string,"no_check_narration":string,"music_state":"explore|tavern|investigation|discovery|tension|chase|ritual|abyss|dread|hell|boss|grief","move_to":string|null,"loot":boolean}. move_to may only be an existing anchor id. Do not adapt difficulty to party size.';
+  const user='FIXED EVENT TIER '+(room.scenario?.danger_tier||1)+'; recommended party '+(room.scenario?.recommended_players||1)+'; progress '+(room.progress||0)+'/100.\nEvent: '+room.scenario?.title+'\nGeometry: '+JSON.stringify(room.scene.geometry)+'\nPlayer: '+JSON.stringify({character:actor.character,wounds:player?.wounds||0,runInventory:(player?.runInventory||[]).map(x=>x.name)})+'\nRecent:\n'+recent+'\nAction: '+action;
+  try{
+    const x=safeJsonText(await openAIChat([{role:'system',content:system},{role:'user',content:user}],.55));if(!x)return fallback;
+    const skills=['Сила','Ловкость','Интеллект','Воля','Восприятие'],music=['explore','tavern','investigation','discovery','tension','chase','ritual','abyss','dread','hell','boss','grief'];
+    return{check_required:Boolean(x.check_required),check_skill:skills.includes(x.check_skill)?x.check_skill:fallback.check_skill,difficulty_shift:clamp(Number(x.difficulty_shift)||0,-1,1),
+      danger:['safe','risky','lethal'].includes(x.danger)?x.danger:'safe',success_narration:String(x.success_narration||fallback.success_narration).slice(0,650),
+      failure_narration:String(x.failure_narration||fallback.failure_narration).slice(0,650),no_check_narration:String(x.no_check_narration||fallback.no_check_narration).slice(0,650),
+      music_state:music.includes(x.music_state)?x.music_state:fallback.music_state,move_to:typeof x.move_to==='string'?x.move_to:null,loot:Boolean(x.loot)};
+  }catch(e){console.warn('GM planner fallback:',e.message);return fallback}
 }
 async function transcribeAudio(audioBase64,mimeType='audio/webm'){
   const c=runtimeConfig().stt||{}; if(!c.api_key||!c.base_url||!c.model) throw new Error('stt_not_configured');
@@ -99,40 +104,45 @@ async function synthesizeSpeech(text){
   }
   return null;
 }
+function tryAddRunItem(r,player,item){
+  player.runInventory=player.runInventory||[];player.capacity=player.capacity||runCapacity(player.profile.character);item.status='run';item.ownerId=player.id;
+  if(inventoryUsage(player.runInventory)+stackCost(item)<=player.capacity){player.runInventory.push(item);return'run'}
+  item.status='scene';item.ownerId=null;r.scene.loot.push(item);return'scene';
+}
 function dropCharacterInventory(r,p){
-  if(!p.alive)return [];
-  const dropped=[...p.inventory]; p.inventory=[];
-  for(const listing of persisted.market){
-    if(listing.status==='active'&&listing.sellerId===p.id){
-      listing.status='cancelled_on_death';
-      dropped.push(listing.item);
-    }
-  }
-  for(const item of dropped){
-    item.status='scene'; item.ownerId=null;
-    item.provenance.push({at:now(),type:'death_drop',owner:p.id,sceneId:r.scene.id});
-  }
-  r.scene.loot=[...(r.scene.loot||[]),...dropped];
-  p.equipped={weapon:null,armor:null,charm:null,tool:null}; p.alive=false;
-  saveState();
-  return dropped;
+  const player=r.players.get(p.id);if(!player||!player.alive)return[];
+  const dropped=[...(player.runInventory||[])];player.runInventory=[];
+  for(const item of dropped){item.status='scene';item.ownerId=null;item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'death_drop',characterId:player.characterId,eventId:r.scenario.id,sceneId:r.scene.id})}
+  r.scene.loot.push(...dropped);player.alive=false;player.wounds=3;
+  const c=p.characters.find(x=>x.id===player.characterId);if(c){c.status='dead';c.deathAt=now();c.deathEventId=r.scenario.id}
+  syncActiveCharacter(p);saveState();return dropped;
 }
 function commitTurn(r,p,action,result){
-  const earned=farm(p,action,result.music_state);let loot=null,deathDrop=[];
-  if(result.loot&&p.character&&!result.actor_dies){loot=createLoot(p,result.music_state);p.inventory.push(loot);saveState();}
-  if(result.actor_dies)deathDrop=dropCharacterInventory(r,p);else movePlayerToAnchor(r,p.id,result.move_to);
-  const previousSceneId=r.scene.id;
-  if(result.scene_transition){
-    const abandoned=(r.scene.loot||[]).filter(x=>x.status==='scene');
-    for(const item of abandoned){item.status='lost';item.provenance.push({at:now(),type:'lost',sceneId:previousSceneId});}
-    r.scene=createScene(r.scenario,result.narration);for(const [idx,pl] of [...r.players.values()].entries())pl.position=spawnPosition(r.scene,idx);saveState();
+  const player=r.players.get(p.id);if(!player)throw new Error('player_not_in_room');syncActiveCharacter(p);
+  const roll=rollCheck(r.scenario,p.character,action,result,player);let woundsAdded=0,deathDrop=[];
+  if(roll&&!roll.success){
+    if(result.danger==='lethal')woundsAdded=roll.criticalFail?2:1;
+    else if(result.danger==='risky'&&(r.scenario.danger_tier||1)>=3&&roll.criticalFail)woundsAdded=1;
+    player.wounds=clamp((player.wounds||0)+woundsAdded,0,3);
   }
-  r.scene={...r.scene,narration:result.narration,music_state:result.music_state,intensity:result.intensity};
-  r.log.unshift({at:now(),actor:p.name,action,narration:result.narration});
-  const alive=[...r.players.values()].filter(x=>x.profile.alive);
-  if(alive.length)r.turnIndex=(r.turnIndex+1)%alive.length;
-  return {earned,loot,deathDrop};
+  if(player.wounds>=3)deathDrop=dropCharacterInventory(r,p);else movePlayerToAnchor(r,p.id,result.move_to);
+  const narration=roll?(roll.success?result.success_narration:result.failure_narration):result.no_check_narration;
+  r.progress=clamp((r.progress||0)+(roll?(roll.success?14+(r.scenario.danger_tier||1)*2:3):6),0,100);
+  const drops=[];
+  if(player.alive&&(result.loot||roll?.success)&&Math.random()<.18+(r.scenario.danger_tier||1)*.06){
+    const material=randomMaterial(r.scenario);if(material){tryAddRunItem(r,player,material);drops.push(material)}
+  }
+  if(player.alive&&roll?.success&&Math.random()<.06+(r.scenario.danger_tier||1)*.035){
+    const item=createLoot(p,result.music_state,r.scenario,behaviorTags(r,p.id));tryAddRunItem(r,player,item);drops.push(item)
+  }
+  r.scene.narration=narration+(deathDrop.length?' Персонаж погибает, а всё взятое в поход остаётся в этой сцене.':'');
+  r.scene.music_state=deathDrop.length?'grief':result.music_state||'explore';r.scene.intensity=result.danger==='lethal'?.9:result.danger==='risky'?.65:.35;
+  r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,action,narration:r.scene.narration,roll});
+  const alive=[...r.players.values()].filter(x=>x.alive);if(alive.length)r.turnIndex=(r.turnIndex+1)%alive.length;
+  if(!alive.length){r.completed=true;r.outcome='wipe';for(const item of r.scene.loot){item.status='lost'}r.scene.loot=[]}
+  saveState();return{narration:r.scene.narration,music_state:r.scene.music_state,intensity:r.scene.intensity,dice:roll,wounds:player.wounds,woundsAdded,deathDrop,drops,progress:r.progress};
 }
+
 
 function starterInventory(){
   const out=[];
@@ -302,11 +312,25 @@ function classifyMusic(text='') {
   if(/бой|атак|удар|враг/.test(t))return'tension'; if(/наш|откр|понял|тайн/.test(t))return'discovery';
   return'explore';
 }
-function fallbackGM(room, action, actor) {
-  const music=classifyMusic(action);const t=normalize(action);const anchor=room.scene.geometry?.anchors?.find(a=>t.includes(normalize(a.label))||t.includes(normalize(a.id)));
-  const narration=`${actor.name} действует: ${action}. Мир отвечает последствием, которое сохраняет текущий канон сцены. Следующий выбор партии уже будет учитывать это действие.`;
-  return {narration,music_state:music,intensity:['boss','hell','chase'].includes(music)?.9:['tension','dread'].includes(music)?.65:.35,scene_transition:false,loot:Math.random()<.28,actor_dies:false,move_to:anchor?.id||null};
+function chooseSkill(action){
+  const t=normalize(action);if(/поднять|слом|толк|удар|сил/.test(t))return'Сила';if(/прыг|уклон|крад|тихо|ловк|стрел/.test(t))return'Ловкость';
+  if(/анализ|взлом|маг|знан|механ/.test(t))return'Интеллект';if(/страх|вол|концент|ритуал/.test(t))return'Воля';return'Восприятие';
 }
+function fallbackGM(room,action,actor){
+  const t=normalize(action),risky=/атак|прыг|взлом|крад|бег|ритуал|слом|лез|переб|плыв/.test(t),lethal=/пропаст|огонь|босс|бездна|прыгаю вниз/.test(t);
+  const anchor=room.scene.geometry?.anchors?.find(x=>t.includes(normalize(x.label))||t.includes(normalize(x.id)));
+  return{check_required:risky,check_skill:chooseSkill(action),difficulty_shift:0,danger:lethal?'lethal':risky?'risky':'safe',
+    success_narration:(actor.character?.name||actor.name)+' добивается результата.',failure_narration:'Попытка проваливается и создаёт осложнение.',
+    no_check_narration:(actor.character?.name||actor.name)+' действует: '+action+'.',music_state:risky?'tension':'explore',move_to:anchor?.id||null,loot:risky};
+}
+function fixedDc(event,shift=0){return clamp(7+(event?.danger_tier||1)*2+clamp(Number(shift)||0,-1,1)*2,7,19)}
+function rollCheck(event,character,action,proposal,player){
+  if(!proposal.check_required)return null;const skill=proposal.check_skill||chooseSkill(action),die=crypto.randomInt(1,21),skillValue=Number(character?.skills?.[skill])||2;
+  const modifier=skillValue-2+Math.floor(((character?.level)||1)-1)/5+(Number(player?.nextRollBonus)||0);if(player)player.nextRollBonus=0;
+  const dc=fixedDc(event,proposal.difficulty_shift),critical=die===20,criticalFail=die===1,success=critical||(!criticalFail&&die+modifier>=dc);
+  return{die,skill,modifier,dc,total:die+modifier,success,critical,criticalFail};
+}
+
 function farm(profile, action, music) {
   const n=normalize(action); if(n.length<8||profile.recentActions.includes(n))return 0;
   const cap=60, base=['boss','discovery'].includes(music)?5:3, reward=Math.min(base,Math.max(0,cap-profile.farmToday));
@@ -361,7 +385,7 @@ function personalPOV(room,profileId){
   return {sceneId:room.scene.id,canonicalTitle:room.scene.title,camera:{x:pos.x,y:pos.y,z:(pos.z||0)+pos.eyeHeight,eyeHeight:pos.eyeHeight,anchorId:pos.anchorId},visibleAnchors:visible,hiddenAnchorCount:Math.max(0,(room.scene.geometry?.anchors?.length||0)-visible.length),narration:room.scene.narration,music_state:room.scene.music_state};
 }
 function getRoom(c){ return rooms.get(String(c||'').toUpperCase()); }
-function roomView(r){ return {code:r.code,scenario:r.scenario,hostId:r.hostId,started:r.started,turnIndex:r.turnIndex,scene:r.scene,players:[...r.players.values()].map(x=>({id:x.id,name:x.name,ready:x.ready,character:x.profile.character,alive:x.profile.alive,position:x.position}))}; }
+function roomView(r){ return {code:r.code,scenario:r.scenario,event:r.scenario,hostId:r.hostId,started:r.started,completed:Boolean(r.completed),outcome:r.outcome||null,turnIndex:r.turnIndex,progress:r.progress||0,participantsAtStart:r.participantsAtStart||0,scene:r.scene,players:[...r.players.values()].map(x=>({id:x.id,name:x.name,ready:x.ready,characterId:x.characterId,character:x.profile.character,alive:x.alive!==false,position:x.position,wounds:x.wounds||0,capacity:x.capacity||6,runUsage:inventoryUsage(x.runInventory||[]),runInventory:x.runInventory||[],pendingLoadout:x.pendingLoadout||[]}))}; }
 
 async function api(req,res,u){
   try {
