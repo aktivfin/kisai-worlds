@@ -356,7 +356,7 @@ function chooseSkill(action){
   if(/анализ|взлом|маг|знан|механ/.test(t))return'Интеллект';if(/страх|вол|концент|ритуал/.test(t))return'Воля';return'Восприятие';
 }
 function fallbackGM(room,action,actor){
-  const t=normalize(action),risky=/атак|прыг|взлом|крад|бег|ритуал|слом|лез|переб|плыв/.test(t),lethal=/пропаст|огонь|босс|бездна|прыгаю вниз/.test(t);
+  const t=normalize(action),risky=/атак|прыг|взлом|крад|бег|ритуал|слом|лез|переб|плыв/.test(t),lethal=/пропаст|огн|босс|бездн|смертел|прыгаю вниз|прыжок вниз/.test(t);
   const anchor=room.scene.geometry?.anchors?.find(x=>t.includes(normalize(x.label))||t.includes(normalize(x.id)));
   return{check_required:risky,check_skill:chooseSkill(action),difficulty_shift:0,danger:lethal?'lethal':risky?'risky':'safe',
     success_narration:(actor.character?.name||actor.name)+' добивается результата.',failure_narration:'Попытка проваливается и создаёт осложнение.',
