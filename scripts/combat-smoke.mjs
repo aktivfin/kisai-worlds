@@ -51,7 +51,7 @@ import {spawn} from 'node:child_process';
 }
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const child=spawn(process.execPath,['server.mjs'],{stdio:['ignore','pipe','pipe'],env:{...process.env,KISAI_TEST_DICE:'20'}});
+const child=spawn(process.execPath,['server.mjs'],{stdio:['ignore','pipe','pipe'],env:{...process.env,KISAI_TEST_DICE:'20,20'}});
 let stderr='';child.stderr.on('data',d=>stderr+=d);
 const raw=async(path,options={})=>{
   const r=await fetch('http://127.0.0.1:8787'+path,{headers:{'content-type':'application/json'},...options});let data=null;try{data=await r.json()}catch{}
@@ -73,11 +73,14 @@ try{
   const started=await post('/api/rooms/'+code+'/start',{});
   const enemy=started.scene.combatants?.[0];assert.ok(enemy&&enemy.combat?.hp_max>0,'canonical scene must expose a hostile combatant');
   const beforeDurability=enemy.equipment.chest.durability;
+  const playerHpBefore=started.players[0].character.combat.hp_current;
   const attack=await post('/api/rooms/'+code+'/combat/attack',{name,action:'Режу противника Разрезом в повреждённое место брони',targetId:enemy.id,targetArea:'breach',aimed:true});
   assert.equal(attack.combat.hit,true);
   assert.equal(attack.combat.attack.die,20);
   assert.ok(attack.combat.attack.evasion>enemy.combat.evasion,'aimed attack must raise hit threshold');
   assert.ok(attack.room.scene.combatants[0].equipment.chest.durability<beforeDurability,'runtime attack must persist armor wear');
-  assert.ok(attack.room.log?.[0]?.combat,'room log must contain the mechanical combat result');
+  assert.ok(attack.counterattack&&attack.counterattack.hit,'living enemy should resolve a deterministic counterattack');
+  const playerAfter=attack.room.players[0];assert.ok(playerAfter.character.combat.hp_current<playerHpBefore,'counterattack must reduce authoritative player HP');
+  assert.ok(attack.room.log?.[0]?.combat&&attack.room.log?.[0]?.counterattack,'room log must contain both sides of the combat exchange');
   console.log('Combat core PASS',{enemy:enemy.name,attack:attack.combat.attack,damage:attack.combat.damage,armor:attack.combat.armor?.before});
 }finally{child.kill('SIGTERM')}
