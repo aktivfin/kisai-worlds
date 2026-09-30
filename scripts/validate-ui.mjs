@@ -5,6 +5,11 @@ const app=fs.readFileSync('public/app.js','utf8');
 const idList=[...html.matchAll(/\bid=["']([^"']+)["']/g)].map(m=>m[1]);
 const duplicateIds=[...new Set(idList.filter((id,i)=>idList.indexOf(id)!==i))];
 if(duplicateIds.length){console.error('Duplicate DOM ids:',duplicateIds.join(', '));process.exit(1);}
+const econTabs=[...html.matchAll(/class=["'][^"']*\beconTab\b[^"']*["'][^>]*data-tab=["']([^"']+)["']/g)].map(m=>m[1]);
+const duplicateEconTabs=[...new Set(econTabs.filter((tab,i)=>econTabs.indexOf(tab)!==i))];
+if(duplicateEconTabs.length){console.error('Duplicate economy tabs:',duplicateEconTabs.join(', '));process.exit(1);}
+if(/друзья слышат тебя|Живой голос игрока слышат остальные/.test(html)){console.error('UI claims continuous party voice that runtime does not implement');process.exit(1);}
+
 const ids=new Set(idList);
 const dynamic=new Set(['sellPrice','sellItem','equipItem','genItemVisual']);
 const refs=[...app.matchAll(/\$\(\s*['"]#([A-Za-z0-9_-]+)['"]\s*\)/g)].map(m=>m[1]);
