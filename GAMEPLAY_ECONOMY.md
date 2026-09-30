@@ -59,7 +59,7 @@ Supported entitlement sources:
 - active subscription;
 - one-run entitlement / promotional ticket in the prototype.
 
-The event catalog carries the displayed one-run price. Production checkout is deliberately not implemented in this repository; a payment provider must grant server-side entitlements after successful payment.
+The event catalog carries prototype one-run prices. Production checkout is deliberately not implemented in this repository; final prices remain configurable, and a payment provider must grant server-side entitlements after successful payment.
 
 Character-slot purchase is represented in the store model but also requires production billing integration.
 
@@ -84,16 +84,15 @@ Additional slots are a monetizable entitlement.
 
 The account stash is the persistent collection and is not destroyed when a character dies.
 
-The expedition backpack is intentionally small:
-- base capacity: 6 slots;
-- +1 slot every five character levels;
-- hard cap: 10 slots.
+The expedition backpack is intentionally small. Character capacity starts at 6 slots, gains +1 every five levels and has a hard character cap of 10. The actual run capacity is `min(character_capacity, event.inventory_slots)`, so an event may impose a stricter preparation limit.
 
 Only items explicitly transferred into the expedition backpack are at risk.
 
 Stackable materials and consumables consume capacity according to quantity. Equipment consumes its own slot cost.
 
 The server validates the complete loadout before any access entitlement or stash item is consumed.
+
+An account may participate in only one active expedition at a time. This prevents concurrent-run stash/economy exploits and keeps one authoritative risk state per account.
 
 ## 7. Resolution and dice
 
