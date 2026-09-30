@@ -7,7 +7,8 @@
     "start": "node server.mjs",
     "check": "node --check server.mjs && node --check public/app.js",
     "validate:assets": "node scripts/validate-assets.mjs",
-    "verify": "npm run check && npm run test:smoke && npm run validate:assets",
-    "test:smoke": "node scripts/smoke.mjs"
+    "verify": "npm run check && npm run validate:ui && npm run test:smoke && npm run validate:assets",
+    "test:smoke": "node scripts/smoke.mjs",
+    "validate:ui": "node scripts/validate-ui.mjs"
   }
 }
