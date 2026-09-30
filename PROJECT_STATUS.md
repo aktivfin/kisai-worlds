@@ -2,29 +2,38 @@
 
 Current baseline: **KisAI Worlds Windows/Linux Demo 0.6.1**.
 
-## Implemented
+## Implemented in the current 0.6.1 branch
 - Multiplayer lobby and turn flow.
-- AI-assisted character creation with level-budget adaptation.
-- Real-player microphone capture plus STT -> GM -> TTS loop.
-- Adaptive soundtrack with 14 scene states, crossfades and speech ducking.
+- AI-assisted character creation with server-side level-budget adaptation and deterministic fallback.
+- Push-to-talk microphone capture with STT -> GM -> TTS when providers are configured.
+- Adaptive soundtrack state runtime.
 - Inventory/equipment, rarity tiers, KAI test ledger and secondary market.
-- Death drops inventory + market escrow into the scene; abandoned loot is lost.
-- Unique character-adaptive item generation with immutable provenance.
-- Cinematic menu transitions and integrated cover art.
-- Windows and Linux installers/launchers with local-only config creation.
+- Death drops inventory + active market escrow into the current scene; abandoned loot is lost on scene transition.
+- Unique character-adaptive item generation with immutable serial, build snapshot and provenance.
+- Canonical scene geometry for bundled scenarios.
+- Per-player position, eye-height and personal POV visibility descriptor.
+- Epic+ item visual-card generation with local immutable cache.
+- Cinematic menu transitions and Windows/Linux launch/install paths.
+- CI split into source/UI/runtime checks and required binary-media validation.
 
-## Visual assignment
-- menu_world.jpg -> main menu hero.
-- lobby_tavern.jpg -> join/lobby.
-- character_creator.jpg -> character creator and arsenal mood.
-- game_harbor.jpg -> canonical gameplay frame.
-- gm_tavern.jpg -> secondary GM/cinematic frame.
-- concept_sheet.png -> production reference only.
+## Verification
+The source/runtime lane currently checks:
+- `npm run check`
+- `npm run validate:ui`
+- `npm run test:smoke`
+
+The bootstrap remains incomplete until `npm run validate:assets` passes with the real project binaries.
+
+## Remaining binary import
+- 14 adaptive soundtrack MP3 files in `public/audio/`.
+- 5 required cinematic JPG files in `public/assets/`.
 
 ## Prototype boundaries
 - KAI remains off-chain test currency only.
 - Browser/LAN vertical slice, not yet a final Steam executable.
-- Generated images do not yet enforce full master-frame -> per-player POV geometry.
+- Party voice is turn-based push-to-talk, not a continuous internet voice channel.
+- Personal POV is a canonical visibility/camera descriptor; full master-frame -> rendered per-player image consistency is not complete.
+- Rooms are still in-memory session state; persistent profiles/economy are local JSON prototype storage.
 
 ## Next milestone
-0.7: canonical scene geometry, personal POV rendering, generated visual cards for Epic+ items, stronger persistence and internet-grade voice transport.
+Finish the real media import, then continue 0.7 voice/session quality and complete the rendered master-scene -> personal-POV pipeline.
