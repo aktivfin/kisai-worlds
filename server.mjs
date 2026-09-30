@@ -68,12 +68,12 @@ async function generateCharacterAI(wish,appearance){
 async function resolveGMAI(room,action,actor){
   if(!providerReady('llm')) return null;
   const recent=room.log.slice(0,8).reverse().map(x=>x.actor+': '+x.action+' -> '+x.narration).join('\\n');
-  const system='You are the authoritative GM runtime for KisAI Worlds. Resolve one player action using only established scene facts. Never grant impossible numeric power because the player asks for it. Character death is allowed only when it is a direct, clearly justified consequence already supported by the scene. Return ONLY JSON: {"narration":string,"music_state":"explore|tavern|investigation|discovery|tension|chase|ritual|abyss|dread|hell|boss|grief","intensity":0..1,"scene_transition":boolean,"loot":boolean,"actor_dies":boolean}. Keep narration under 650 chars.';
+  const system='You are the authoritative GM runtime for KisAI Worlds. Resolve one player action using only established scene facts. Never grant impossible numeric power because the player asks for it. Character death is allowed only when it is a direct, clearly justified consequence already supported by the scene. Return ONLY JSON: {"narration":string,"music_state":"explore|tavern|investigation|discovery|tension|chase|ritual|abyss|dread|hell|boss|grief","intensity":0..1,"scene_transition":boolean,"loot":boolean,"actor_dies":boolean,"move_to":string|null}. move_to may only be an anchor id from the canonical geometry. Keep narration under 650 chars.';
   const user='Scenario: '+room.scenario?.title+'\\nOpening: '+room.scenario?.opening+'\\nCurrent scene: '+room.scene?.narration+'\\nRecent history:\\n'+recent+'\\nActor: '+actor.name+' / '+JSON.stringify(actor.character||{})+'\\nAction: '+action;
   const text=await openAIChat([{role:'system',content:system},{role:'user',content:user}],.65);
   const x=safeJsonText(text); if(!x)return null;
   const allowed=['explore','tavern','investigation','discovery','tension','chase','ritual','abyss','dread','hell','boss','grief'];
-  return {narration:String(x.narration||'').slice(0,900)||fallbackGM(room,action,actor).narration,music_state:allowed.includes(x.music_state)?x.music_state:classifyMusic(x.narration||action),intensity:clamp(Number(x.intensity)||.4,0,1),scene_transition:Boolean(x.scene_transition),loot:Boolean(x.loot),actor_dies:Boolean(x.actor_dies)};
+  return {narration:String(x.narration||'').slice(0,900)||fallbackGM(room,action,actor).narration,music_state:allowed.includes(x.music_state)?x.music_state:classifyMusic(x.narration||action),intensity:clamp(Number(x.intensity)||.4,0,1),scene_transition:Boolean(x.scene_transition),loot:Boolean(x.loot),actor_dies:Boolean(x.actor_dies),move_to:typeof x.move_to==='string'?x.move_to:null};
 }
 async function transcribeAudio(audioBase64,mimeType='audio/webm'){
   const c=runtimeConfig().stt||{}; if(!c.api_key||!c.base_url||!c.model) throw new Error('stt_not_configured');
@@ -116,12 +116,12 @@ function dropCharacterInventory(r,p){
 function commitTurn(r,p,action,result){
   const earned=farm(p,action,result.music_state);let loot=null,deathDrop=[];
   if(result.loot&&p.character&&!result.actor_dies){loot=createLoot(p,result.music_state);p.inventory.push(loot);saveState();}
-  if(result.actor_dies)deathDrop=dropCharacterInventory(r,p);
+  if(result.actor_dies)deathDrop=dropCharacterInventory(r,p);else movePlayerToAnchor(r,p.id,result.move_to);
   const previousSceneId=r.scene.id;
   if(result.scene_transition){
     const abandoned=(r.scene.loot||[]).filter(x=>x.status==='scene');
     for(const item of abandoned){item.status='lost';item.provenance.push({at:now(),type:'lost',sceneId:previousSceneId});}
-    r.scene={id:id('scene'),title:r.scenario?.title||'Сцена',loot:[]}; saveState();
+    r.scene=createScene(r.scenario,result.narration);for(const [idx,pl] of [...r.players.values()].entries())pl.position=spawnPosition(r.scene,idx);saveState();
   }
   r.scene={...r.scene,narration:result.narration,music_state:result.music_state,intensity:result.intensity};
   r.log.unshift({at:now(),actor:p.name,action,narration:result.narration});
@@ -192,9 +192,9 @@ function classifyMusic(text='') {
   return'explore';
 }
 function fallbackGM(room, action, actor) {
-  const music=classifyMusic(action);
+  const music=classifyMusic(action);const t=normalize(action);const anchor=room.scene.geometry?.anchors?.find(a=>t.includes(normalize(a.label))||t.includes(normalize(a.id)));
   const narration=`${actor.name} действует: ${action}. Мир отвечает последствием, которое сохраняет текущий канон сцены. Следующий выбор партии уже будет учитывать это действие.`;
-  return {narration,music_state:music,intensity:['boss','hell','chase'].includes(music)?.9:['tension','dread'].includes(music)?.65:.35,scene_transition:false,loot:Math.random()<.28,actor_dies:false};
+  return {narration,music_state:music,intensity:['boss','hell','chase'].includes(music)?.9:['tension','dread'].includes(music)?.65:.35,scene_transition:false,loot:Math.random()<.28,actor_dies:false,move_to:anchor?.id||null};
 }
 function farm(profile, action, music) {
   const n=normalize(action); if(n.length<8||profile.recentActions.includes(n))return 0;
@@ -203,8 +203,43 @@ function farm(profile, action, music) {
   if(reward) persisted.transactions.unshift({id:id('tx'),at:now(),profileId:profile.id,type:'farm',amount:reward});
   saveState(); return reward;
 }
+function sceneGeometryFor(scenario){
+  const id=scenario?.id||'default';
+  const maps={
+    black_station:{width:38,depth:16,visibilityRadius:19,anchors:[
+      {id:'train_door',label:'Двери поезда',x:4,y:8,z:0},{id:'platform_lamp',label:'Мигающий фонарь',x:15,y:5,z:0},
+      {id:'station_sign',label:'Табличка ЧЁРНАЯ',x:24,y:7,z:0},{id:'service_door',label:'Служебная дверь',x:34,y:12,z:0}
+    ]},
+    ash_crown:{width:24,depth:20,visibilityRadius:16,anchors:[
+      {id:'tavern_table',label:'Стол с письмом',x:12,y:10,z:0},{id:'hearth',label:'Камин',x:4,y:5,z:0},
+      {id:'front_door',label:'Вход в трактир',x:21,y:16,z:0},{id:'stairs',label:'Лестница наверх',x:5,y:17,z:0}
+    ]},
+    red_orbit:{width:32,depth:18,visibilityRadius:17,anchors:[
+      {id:'airlock',label:'Стыковочный шлюз',x:3,y:9,z:0},{id:'main_corridor',label:'Главный коридор',x:13,y:9,z:0},
+      {id:'control_door',label:'Дверь центра управления',x:24,y:5,z:0},{id:'service_hatch',label:'Сервисный люк',x:27,y:14,z:0}
+    ]}
+  };
+  return maps[id]||{width:24,depth:18,visibilityRadius:15,anchors:[{id:'center',label:'Центр сцены',x:12,y:9,z:0}]};
+}
+function createScene(scenario,narration){
+  return {id:id('scene'),title:scenario?.title||'Сцена',narration:narration??scenario?.opening??'',music_state:'explore',intensity:.25,loot:[],geometry:sceneGeometryFor(scenario)};
+}
+function spawnPosition(scene,index=0){
+  const a=scene.geometry?.anchors?.[0]||{x:0,y:0,z:0};
+  return {x:a.x+Math.min(index,3)*.7,y:a.y,z:a.z||0,eyeHeight:1.7,anchorId:a.id};
+}
+function movePlayerToAnchor(room,profileId,anchorId){
+  if(!anchorId)return false;const player=room.players.get(profileId),a=room.scene.geometry?.anchors?.find(x=>x.id===anchorId);
+  if(!player||!a)return false;player.position={x:a.x,y:a.y,z:a.z||0,eyeHeight:player.position?.eyeHeight||1.7,anchorId:a.id};return true;
+}
+function personalPOV(room,profileId){
+  const player=room.players.get(profileId);if(!player)return null;
+  const pos=player.position||spawnPosition(room.scene,0),radius=room.scene.geometry?.visibilityRadius||15;
+  const visible=(room.scene.geometry?.anchors||[]).filter(a=>Math.hypot((a.x||0)-pos.x,(a.y||0)-pos.y)<=radius);
+  return {sceneId:room.scene.id,canonicalTitle:room.scene.title,camera:{x:pos.x,y:pos.y,z:(pos.z||0)+pos.eyeHeight,eyeHeight:pos.eyeHeight,anchorId:pos.anchorId},visibleAnchors:visible,hiddenAnchorCount:Math.max(0,(room.scene.geometry?.anchors?.length||0)-visible.length),narration:room.scene.narration,music_state:room.scene.music_state};
+}
 function getRoom(c){ return rooms.get(String(c||'').toUpperCase()); }
-function roomView(r){ return {code:r.code,scenario:r.scenario,hostId:r.hostId,started:r.started,turnIndex:r.turnIndex,scene:r.scene,players:[...r.players.values()].map(x=>({id:x.id,name:x.name,ready:x.ready,character:x.profile.character,alive:x.profile.alive}))}; }
+function roomView(r){ return {code:r.code,scenario:r.scenario,hostId:r.hostId,started:r.started,turnIndex:r.turnIndex,scene:r.scene,players:[...r.players.values()].map(x=>({id:x.id,name:x.name,ready:x.ready,character:x.profile.character,alive:x.profile.alive,position:x.position}))}; }
 
 async function api(req,res,u){
   try {
@@ -223,13 +258,16 @@ async function api(req,res,u){
     }
     if(req.method==='POST'&&u.pathname==='/api/rooms') {
       const b=await body(req), scenario=scenarios.find(s=>s.id===b.scenarioId)||scenarios[0], profile=ensureProfile(b.name);
-      const room={code:code(),scenario,hostId:profile.id,started:false,turnIndex:0,players:new Map(),scene:{id:id('scene'),title:scenario?.title||'Сцена',narration:scenario?.opening||'',music_state:'lobby',intensity:.25,loot:[]},log:[]};
-      room.players.set(profile.id,{id:profile.id,name:profile.name,ready:false,profile}); rooms.set(room.code,room); return json(res,201,{room:roomView(room),profile:publicProfile(profile)});
+      const room={code:code(),scenario,hostId:profile.id,started:false,turnIndex:0,players:new Map(),scene:createScene(scenario,scenario?.opening||''),log:[]};room.scene.music_state='lobby';
+      room.players.set(profile.id,{id:profile.id,name:profile.name,ready:false,profile,position:spawnPosition(room.scene,0)}); rooms.set(room.code,room); return json(res,201,{room:roomView(room),profile:publicProfile(profile)});
     }
     const join=u.pathname.match(/^\/api\/rooms\/([^/]+)\/join$/);
-    if(req.method==='POST'&&join){const r=getRoom(join[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);r.players.set(p.id,{id:p.id,name:p.name,ready:false,profile:p});return json(res,200,{room:roomView(r),profile:publicProfile(p)});}
+    if(req.method==='POST'&&join){const r=getRoom(join[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);r.players.set(p.id,{id:p.id,name:p.name,ready:false,profile:p,position:spawnPosition(r.scene,r.players.size)});return json(res,200,{room:roomView(r),profile:publicProfile(p)});}
     const roomGet=u.pathname.match(/^\/api\/rooms\/([^/]+)$/);
     if(req.method==='GET'&&roomGet){const r=getRoom(roomGet[1]);return r?json(res,200,roomView(r)):json(res,404,{error:'room_not_found'});}
+    const povGet=u.pathname.match(/^\/api\/rooms\/([^/]+)\/pov$/);
+    if(req.method==='GET'&&povGet){const r=getRoom(povGet[1]);if(!r)return json(res,404,{error:'room_not_found'});const p=ensureProfile(u.searchParams.get('name')),view=personalPOV(r,p.id);return view?json(res,200,view):json(res,404,{error:'player_not_in_room'});}
+
     const char=u.pathname.match(/^\/api\/rooms\/([^/]+)\/character$/);
     if(req.method==='POST'&&char){const r=getRoom(char[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);let generated=null;try{generated=await generateCharacterAI(b.wish,b.appearance)}catch(e){console.warn('character AI fallback:',e.message)}p.character=generated||fallbackCharacter(b.wish,b.appearance);p.alive=true;saveState();const rp=r.players.get(p.id);if(rp)rp.ready=true;return json(res,200,{character:p.character,profile:publicProfile(p),room:roomView(r),ai:Boolean(generated)});}
     const start=u.pathname.match(/^\/api\/rooms\/([^/]+)\/start$/);
