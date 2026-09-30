@@ -1,14 +1,15 @@
 {
   "name": "kisai-worlds-windows-demo",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
-  "description": "AI extraction RPG prototype with rotating fixed-difficulty events, permadeath, limited expedition inventory, crafting, enchanting and player market",
+  "description": "AI extraction RPG prototype with classless characters, deterministic combat, durability, permadeath, crafting, enchanting and player market",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check public/app.js",
+    "check": "node --check server.mjs && node --check public/app.js && node --check core/combat.mjs && node --check core/character.mjs",
     "validate:assets": "node scripts/validate-assets.mjs",
-    "verify": "npm run check && npm run validate:ui && npm run test:smoke && npm run validate:assets",
+    "verify": "npm run check && npm run validate:ui && npm run test:combat && npm run test:smoke && npm run validate:assets",
     "test:smoke": "node scripts/smoke.mjs",
-    "validate:ui": "node scripts/validate-ui.mjs"
+    "validate:ui": "node scripts/validate-ui.mjs",
+    "test:combat": "node scripts/combat-smoke.mjs"
   }
 }
