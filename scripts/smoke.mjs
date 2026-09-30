@@ -29,9 +29,11 @@ try{
   if(!started.started)throw new Error('room not started');
   const turn=await request('/api/rooms/'+code+'/turn',{method:'POST',body:JSON.stringify({name:'CI Hero',action:'осматриваю платформу и ищу следы'})});
   if(!turn.narration||!turn.room?.scene)throw new Error('turn did not commit');
+  const pov=await request('/api/rooms/'+code+'/pov?name='+encodeURIComponent('CI Hero'));
+  if(!pov.camera||!Array.isArray(pov.visibleAnchors))throw new Error('POV not available');
   const page=await fetch('http://127.0.0.1:8787/');
   if(!page.ok||(await page.text()).indexOf('KisAI Worlds')<0)throw new Error('index not served');
-  console.log('Smoke PASS:',{version:health.version,scenario:scenarios[0].id,room:code,archetype:char.character.archetype,music:turn.music_state});
+  console.log('Smoke PASS:',{version:health.version,scenario:scenarios[0].id,room:code,archetype:char.character.archetype,music:turn.music_state,visible:pov.visibleAnchors.length});
 }finally{
   child.kill('SIGTERM');
 }
