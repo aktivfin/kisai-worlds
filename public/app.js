@@ -89,7 +89,7 @@ function renderEvents(){
       '<div class="eventRewardBox"><div><small>ПОТЕНЦИАЛ НАГРАДЫ</small><b>Loot Tier '+e.loot_tier+'</b></div><span>'+e.inventory_slots+' слотов рюкзака</span></div>'+
       '<div class="fixedWarning"><b>△ Сложность не масштабируется вниз</b><span>Меньшая группа получает больший риск и повышенную награду, а не более лёгких врагов.</span></div>'+
       '<button id="prepareSelectedEvent" class="goldBtn wide eventPrepareBtn">Подготовить экспедицию →</button></div>';
-    const prep=$('#prepareSelectedEvent');
+    const prep=document.getElementById('prepareSelectedEvent');
     if(prep)prep.onclick=()=>{document.querySelector('.setupBottom')?.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(()=>$('#playerName')?.focus(),350)};
   }
 
