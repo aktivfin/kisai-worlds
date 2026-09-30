@@ -41,6 +41,8 @@ const normalize = s => String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
 const json = (res,status,body) => { const data=JSON.stringify(body); res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}); res.end(data); };
 const body = req => new Promise((resolve,reject)=>{ let raw=''; req.on('data',c=>{raw+=c;if(raw.length>15_000_000){reject(new Error('body too large'));req.destroy();}}); req.on('end',()=>{try{resolve(raw?JSON.parse(raw):{});}catch(e){reject(e);}}); req.on('error',reject); });
 const saveState = () => writeJson(STATE_FILE, persisted);
+const TEST_DICE_QUEUE=String(process.env.KISAI_TEST_DICE||'').split(',').map(Number).filter(n=>Number.isInteger(n)&&n>=1&&n<=20);
+const nextD20=()=>TEST_DICE_QUEUE.length?TEST_DICE_QUEUE.shift():nextD20();
 
 
 function runtimeConfig(){ return readJson(CONFIG_FILE, {}); }
@@ -282,7 +284,7 @@ function enchantRunItem(room,player,targetId,ingredientIds){
   const picked=ids.map(x=>{const item=player.runInventory.find(i=>i.id===x),def=enchantDefinition(item);if(!def)throw new Error('invalid_enchant_ingredient');return{item,def}});
   for(const x of picked)consumeInventoryItem(player.runInventory,x.item.id,1);
   const skill=Math.max(Number(player.character?.skills?.Интеллект)||2,Number(player.character?.skills?.Воля)||2);
-  const die=crypto.randomInt(1,21),modifier=skill-2+Math.floor(((player.character?.level)||1)-1)/5,success=die===20||(die!==1&&die+modifier>=facility.challenge_dc);
+  const die=nextD20(),modifier=skill-2+Math.floor(((player.character?.level)||1)-1)/5,success=die===20||(die!==1&&die+modifier>=facility.challenge_dc);
   const roll={die,skill:'Интеллект/Воля',modifier,dc:facility.challenge_dc,total:die+modifier,success,critical:die===20,criticalFail:die===1};
   target.enchantments=target.enchantments||[];target.provenance=target.provenance||[];
   if(success){
@@ -364,7 +366,7 @@ function fallbackGM(room,action,actor){
 }
 function fixedDc(event,shift=0){return clamp(7+(event?.danger_tier||1)*2+clamp(Number(shift)||0,-1,1)*2,7,19)}
 function rollCheck(event,character,action,proposal,player){
-  if(!proposal.check_required)return null;const skill=proposal.check_skill||chooseSkill(action),die=crypto.randomInt(1,21),skillValue=Number(character?.skills?.[skill])||2;
+  if(!proposal.check_required)return null;const skill=proposal.check_skill||chooseSkill(action),die=nextD20(),skillValue=Number(character?.skills?.[skill])||2;
   const modifier=skillValue-2+Math.floor(((character?.level)||1)-1)/5+(Number(player?.nextRollBonus)||0);if(player)player.nextRollBonus=0;
   const dc=fixedDc(event,proposal.difficulty_shift),critical=die===20,criticalFail=die===1,success=critical||(!criticalFail&&die+modifier>=dc);
   return{die,skill,modifier,dc,total:die+modifier,success,critical,criticalFail};
@@ -480,7 +482,7 @@ function enchantItem(r,player,targetId,ingredientIds){
     if(!item||def?.kind!=='enchant_ingredient')throw new Error('invalid_enchant_ingredient');return{item,def};
   });
   for(const x of ingredients)consumeInventoryItem(player.runInventory,x.item.id,1);
-  const skill=Math.max(Number(player.character?.skills?.Интеллект)||2,Number(player.character?.skills?.Воля)||2),die=crypto.randomInt(1,21),modifier=skill-2+Math.floor(((player.character?.level)||1)-1)/5,dc=facility.challenge_dc||13;
+  const skill=Math.max(Number(player.character?.skills?.Интеллект)||2,Number(player.character?.skills?.Воля)||2),die=nextD20(),modifier=skill-2+Math.floor(((player.character?.level)||1)-1)/5,dc=facility.challenge_dc||13;
   const success=die===20||(die!==1&&die+modifier>=dc),roll={die,skill:'Интеллект/Воля',modifier,dc,total:die+modifier,success,critical:die===20,criticalFail:die===1};
   target.provenance=target.provenance||[];
   if(success){
