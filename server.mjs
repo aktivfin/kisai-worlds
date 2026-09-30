@@ -68,12 +68,12 @@ async function generateCharacterAI(wish,appearance){
 async function resolveGMAI(room,action,actor){
   if(!providerReady('llm')) return null;
   const recent=room.log.slice(0,8).reverse().map(x=>x.actor+': '+x.action+' -> '+x.narration).join('\\n');
-  const system='You are the authoritative GM runtime for KisAI Worlds. Resolve one player action using only established scene facts. Never grant impossible numeric power because the player asks for it. Return ONLY JSON: {"narration":string,"music_state":"explore|tavern|investigation|discovery|tension|chase|ritual|abyss|dread|hell|boss|grief","intensity":0..1,"scene_transition":boolean,"loot":boolean}. Keep narration under 650 chars.';
+  const system='You are the authoritative GM runtime for KisAI Worlds. Resolve one player action using only established scene facts. Never grant impossible numeric power because the player asks for it. Character death is allowed only when it is a direct, clearly justified consequence already supported by the scene. Return ONLY JSON: {"narration":string,"music_state":"explore|tavern|investigation|discovery|tension|chase|ritual|abyss|dread|hell|boss|grief","intensity":0..1,"scene_transition":boolean,"loot":boolean,"actor_dies":boolean}. Keep narration under 650 chars.';
   const user='Scenario: '+room.scenario?.title+'\\nOpening: '+room.scenario?.opening+'\\nCurrent scene: '+room.scene?.narration+'\\nRecent history:\\n'+recent+'\\nActor: '+actor.name+' / '+JSON.stringify(actor.character||{})+'\\nAction: '+action;
   const text=await openAIChat([{role:'system',content:system},{role:'user',content:user}],.65);
   const x=safeJsonText(text); if(!x)return null;
   const allowed=['explore','tavern','investigation','discovery','tension','chase','ritual','abyss','dread','hell','boss','grief'];
-  return {narration:String(x.narration||'').slice(0,900)||fallbackGM(room,action,actor).narration,music_state:allowed.includes(x.music_state)?x.music_state:classifyMusic(x.narration||action),intensity:clamp(Number(x.intensity)||.4,0,1),scene_transition:Boolean(x.scene_transition),loot:Boolean(x.loot)};
+  return {narration:String(x.narration||'').slice(0,900)||fallbackGM(room,action,actor).narration,music_state:allowed.includes(x.music_state)?x.music_state:classifyMusic(x.narration||action),intensity:clamp(Number(x.intensity)||.4,0,1),scene_transition:Boolean(x.scene_transition),loot:Boolean(x.loot),actor_dies:Boolean(x.actor_dies)};
 }
 async function transcribeAudio(audioBase64,mimeType='audio/webm'){
   const c=runtimeConfig().stt||{}; if(!c.api_key||!c.base_url||!c.model) throw new Error('stt_not_configured');
@@ -95,20 +95,39 @@ async function synthesizeSpeech(text){
   }
   return null;
 }
+function dropCharacterInventory(r,p){
+  if(!p.alive)return [];
+  const dropped=[...p.inventory]; p.inventory=[];
+  for(const listing of persisted.market){
+    if(listing.status==='active'&&listing.sellerId===p.id){
+      listing.status='cancelled_on_death';
+      dropped.push(listing.item);
+    }
+  }
+  for(const item of dropped){
+    item.status='scene'; item.ownerId=null;
+    item.provenance.push({at:now(),type:'death_drop',owner:p.id,sceneId:r.scene.id});
+  }
+  r.scene.loot=[...(r.scene.loot||[]),...dropped];
+  p.equipped={weapon:null,armor:null,charm:null,tool:null}; p.alive=false;
+  saveState();
+  return dropped;
+}
 function commitTurn(r,p,action,result){
-  const earned=farm(p,action,result.music_state);let loot=null;
-  if(result.loot&&p.character){loot=createLoot(p,result.music_state);p.inventory.push(loot);saveState();}
+  const earned=farm(p,action,result.music_state);let loot=null,deathDrop=[];
+  if(result.loot&&p.character&&!result.actor_dies){loot=createLoot(p,result.music_state);p.inventory.push(loot);saveState();}
+  if(result.actor_dies)deathDrop=dropCharacterInventory(r,p);
   const previousSceneId=r.scene.id;
   if(result.scene_transition){
     const abandoned=(r.scene.loot||[]).filter(x=>x.status==='scene');
     for(const item of abandoned){item.status='lost';item.provenance.push({at:now(),type:'lost',sceneId:previousSceneId});}
-    r.scene={id:id('scene'),title:r.scenario?.title||'Сцена',loot:[]};
+    r.scene={id:id('scene'),title:r.scenario?.title||'Сцена',loot:[]}; saveState();
   }
   r.scene={...r.scene,narration:result.narration,music_state:result.music_state,intensity:result.intensity};
   r.log.unshift({at:now(),actor:p.name,action,narration:result.narration});
   const alive=[...r.players.values()].filter(x=>x.profile.alive);
   if(alive.length)r.turnIndex=(r.turnIndex+1)%alive.length;
-  return {earned,loot};
+  return {earned,loot,deathDrop};
 }
 
 function ensureProfile(name='Игрок') {
@@ -175,7 +194,7 @@ function classifyMusic(text='') {
 function fallbackGM(room, action, actor) {
   const music=classifyMusic(action);
   const narration=`${actor.name} действует: ${action}. Мир отвечает последствием, которое сохраняет текущий канон сцены. Следующий выбор партии уже будет учитывать это действие.`;
-  return {narration,music_state:music,intensity:['boss','hell','chase'].includes(music)?.9:['tension','dread'].includes(music)?.65:.35,scene_transition:false,loot:Math.random()<.28};
+  return {narration,music_state:music,intensity:['boss','hell','chase'].includes(music)?.9:['tension','dread'].includes(music)?.65:.35,scene_transition:false,loot:Math.random()<.28,actor_dies:false};
 }
 function farm(profile, action, music) {
   const n=normalize(action); if(n.length<8||profile.recentActions.includes(n))return 0;
@@ -212,7 +231,7 @@ async function api(req,res,u){
     const roomGet=u.pathname.match(/^\/api\/rooms\/([^/]+)$/);
     if(req.method==='GET'&&roomGet){const r=getRoom(roomGet[1]);return r?json(res,200,roomView(r)):json(res,404,{error:'room_not_found'});}
     const char=u.pathname.match(/^\/api\/rooms\/([^/]+)\/character$/);
-    if(req.method==='POST'&&char){const r=getRoom(char[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);let generated=null;try{generated=await generateCharacterAI(b.wish,b.appearance)}catch(e){console.warn('character AI fallback:',e.message)}p.character=generated||fallbackCharacter(b.wish,b.appearance);saveState();const rp=r.players.get(p.id);if(rp)rp.ready=true;return json(res,200,{character:p.character,profile:publicProfile(p),room:roomView(r),ai:Boolean(generated)});}
+    if(req.method==='POST'&&char){const r=getRoom(char[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=ensureProfile(b.name);let generated=null;try{generated=await generateCharacterAI(b.wish,b.appearance)}catch(e){console.warn('character AI fallback:',e.message)}p.character=generated||fallbackCharacter(b.wish,b.appearance);p.alive=true;saveState();const rp=r.players.get(p.id);if(rp)rp.ready=true;return json(res,200,{character:p.character,profile:publicProfile(p),room:roomView(r),ai:Boolean(generated)});}
     const start=u.pathname.match(/^\/api\/rooms\/([^/]+)\/start$/);
     if(req.method==='POST'&&start){const r=getRoom(start[1]);if(!r)return json(res,404,{error:'room_not_found'});r.started=true;r.scene.music_state='explore';return json(res,200,roomView(r));}
     const turn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/turn$/);
@@ -226,6 +245,14 @@ async function api(req,res,u){
       let result=null;try{result=await resolveGMAI(r,action,p)}catch(e){console.warn('GM AI fallback:',e.message)}result=result||fallbackGM(r,action,p);
       const committed=commitTurn(r,p,action,result);let speechBase64=null;try{speechBase64=await synthesizeSpeech(result.narration)}catch(e){console.warn('TTS fallback:',e.message)}
       return json(res,200,{transcript:action,...result,...committed,room:roomView(r),profile:publicProfile(p),speechBase64,speechMime:'audio/mpeg'});
+    }
+        const claimLoot=u.pathname.match(/^\/api\/rooms\/([^/]+)\/loot\/([^/]+)\/claim$/);
+    if(req.method==='POST'&&claim){
+      const r=getRoom(claim[1]);if(!r)return json(res,404,{error:'room_not_found'});
+      const b=await body(req),p=ensureProfile(b.name);if(!p.alive)return json(res,409,{error:'character_dead'});
+      const idx=(r.scene.loot||[]).findIndex(x=>x.id===claim[2]&&x.status==='scene');if(idx<0)return json(res,404,{error:'loot_not_found'});
+      const [item]=r.scene.loot.splice(idx,1);item.status='owned';item.ownerId=p.id;item.provenance.push({at:now(),type:'claimed',owner:p.id,sceneId:r.scene.id});p.inventory.push(item);saveState();
+      return json(res,200,{item,room:roomView(r),profile:publicProfile(p)});
     }
     if(req.method==='GET'&&u.pathname==='/api/profile'){const p=ensureProfile(u.searchParams.get('name'));return json(res,200,publicProfile(p));}
     if(req.method==='GET'&&u.pathname==='/api/market') return json(res,200,persisted.market.filter(x=>x.status==='active'));
