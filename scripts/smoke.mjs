@@ -25,7 +25,7 @@ const getProfile=name=>request('/api/profile?name='+encodeURIComponent(name));
 
 try{
   const health=await ready();
-  if(!health.ok||!String(health.version).includes('0.7'))throw new Error('wrong runtime version');
+  if(!health.ok||!String(health.version).includes('0.8'))throw new Error('wrong runtime version');
 
   const events=await request('/api/events');
   if(!Array.isArray(events)||events.length<3||events.length>9)throw new Error('event rotation must contain 3-9 events');
