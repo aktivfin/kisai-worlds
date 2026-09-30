@@ -13,7 +13,7 @@
   <header class="topbar">
     <button id="brandBtn" class="brand ghostish" aria-label="На главную">
       <span class="sigil">K</span>
-      <span class="brandText"><b>KisAI Worlds</b><small>AI PARTY RPG // DEMO 0.6.1</small></span>
+      <span class="brandText"><b>KisAI Worlds</b><small>AI EXTRACTION RPG // 0.7</small></span>
     </button>
     <nav class="mainNav" aria-label="Основные разделы">
       <button class="navBtn active" data-nav="home">Главная</button><button class="navBtn" data-nav="setup">Карта</button>
@@ -55,7 +55,7 @@
 
     <section id="setup" class="screen setupScreen">
       <div class="sectionHead"><button class="back iconBtn">←</button><div><p class="eyebrow">КАРТА МИРА · РОТАЦИЯ СОБЫТИЙ</p><h2>Выбери приключение</h2></div><div class="stepPill">01 / 03</div></div>
-      <div id="scenarioGrid" class="scenarioGrid"></div>
+      <div class="eventRules glass"><span>Сложность события фиксирована</span><span>1–5 игроков</span><span>Меньше группа → выше риск и награда</span><span>Permadeath</span></div><div id="scenarioGrid" class="scenarioGrid"></div>
       <div class="setupBottom glass"><label><span>Имя игрока</span><input id="playerName" placeholder="Например, Артём" maxlength="24"></label><label><span>Персонаж</span><select id="eventCharacterSelect"><option value="">Создать нового в лобби</option></select></label><div id="eventAccess" class="eventAccess"></div><button id="createRoom" class="goldBtn">Создать лобби <span>→</span></button></div>
     </section>
 
@@ -117,7 +117,7 @@
           <aside class="econSidebar glass">
             <button class="econTab active" data-tab="hero"><span>♙</span><div><b>Герой</b><small>Экипировка и сила</small></div></button>
             <button class="econTab" data-tab="inventory"><span>▦</span><div><b>Склад</b><small>Безлимитное хранилище аккаунта</small></div></button><button class="econTab" data-tab="craft"><span>⚒</span><div><b>Крафт</b><small>Только расходники</small></div></button>
-            <button class="econTab" data-tab="market"><span>◇</span><div><b>Рынок</b><small>Покупка и перепродажа</small></div></button>
+            <button class="econTab" data-tab="craft"><span>⚒</span><div><b>Крафт</b><small>Только расходники</small></div></button><button class="econTab" data-tab="market"><span>◇</span><div><b>Рынок</b><small>Покупка и перепродажа</small></div></button>
             <button class="econTab" data-tab="wallet"><span>◉</span><div><b>Кошелёк</b><small>Фарм и транзакции</small></div></button>
             <div class="ledgerBadge"><i></i><div><b>KisAI Dev Ledger</b><small>Demo · off-chain · без вывода</small></div></div>
           </aside>
@@ -129,7 +129,7 @@
               <div class="paneHead"><div><p class="eyebrow">ACCOUNT STASH</p><h3>Безлимитный склад</h3></div><div class="inventoryFilters"><button class="filterChip active" data-rarity="all">Все</button><button class="filterChip" data-rarity="rare">Rare+</button><button class="filterChip" data-rarity="equipped">Надето</button></div></div>
               <div id="inventoryGrid" class="inventoryGrid"></div>
             </div>
-            <div id="econCraft" class="econPane"><div class="paneHead"><div><p class="eyebrow">CONSUMABLE CRAFT</p><h3>Крафт расходников</h3></div></div><p class="muted">Оружие и броня не крафтятся. Здесь создаются только расходники из предсказуемых материалов.</p><div id="craftGrid" class="craftGrid"></div></div><div id="econMarket" class="econPane">
+            <div id="econCraft" class="econPane"><div class="paneHead"><div><p class="eyebrow">CONSUMABLE CRAFT</p><h3>Крафт расходников</h3></div></div><p class="muted">Оружие и броня не крафтятся. Здесь создаются только расходники из предсказуемых материалов.</p><div id="craftGrid" class="craftGrid"></div></div><div id="econCraft" class="econPane"><div class="paneHead"><div><p class="eyebrow">CONSUMABLE CRAFT</p><h3>Мастерская расходников</h3></div><span class="powerBadge">ВНЕ ПОХОДА</span></div><p class="muted">Оружие здесь не создаётся и не зачаровывается. Зачарование возможно только внутри событий с кузницей или алтарём.</p><div id="craftGrid" class="craftGrid"></div></div><div id="econMarket" class="econPane">
               <div class="paneHead"><div><p class="eyebrow">SECONDARY MARKET</p><h3>Рынок игроков</h3></div><div class="marketTools"><input id="marketSearch" placeholder="Поиск предмета..."><button id="refreshMarket" class="softBtn">↻ Обновить</button></div></div>
               <div class="marketTicker"><span>Комиссия сделки <b>2.5%</b></span><span>Все предметы <b>tradable</b></span><span>Цена задаётся владельцем</span></div>
               <div id="marketGrid" class="marketGrid"></div>
