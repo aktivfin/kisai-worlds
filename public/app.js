@@ -64,6 +64,15 @@ async function music(name){
   let m={};try{m=await fetch('/audio/music_manifest.json').then(r=>r.json())}catch{}let e=m[name];if(!e?.file)return;
   let n=new Audio(e.file);n.loop=true;n.volume=S.volume;n.play().catch(()=>{});if(S.audio)S.audio.pause();S.audio=n;
 }
+async function renderPOV(){
+  if(!S.room||!S.name)return;
+  try{
+    let p=await api('/api/rooms/'+S.room.code+'/pov?name='+encodeURIComponent(S.name)),box=$('#sceneLoot');
+    if(!box)return;
+    let old=box.innerHTML;
+    box.innerHTML='<div class="povCard"><small>PERSONAL POV</small><b>'+esc(p.camera.anchorId||'scene')+'</b><span>Высота взгляда '+Number(p.camera.eyeHeight||1.7).toFixed(2)+' м</span><p>'+p.visibleAnchors.map(a=>esc(a.label)).join(' · ')+'</p>'+(p.hiddenAnchorCount?'<em>Скрытых зон: '+p.hiddenAnchorCount+'</em>':'')+'</div>'+old;
+  }catch{}
+}
 function game(){
   let r=S.room;if(!r)return;let sc=r.scene||{};
   $('#sceneTitle').textContent=sc.title||r.scenario?.title||'Текущая сцена';$('#gmText').textContent=sc.narration||'';$('#gameScenarioLabel').textContent=(r.scenario?.title||'KISAI WORLD').toUpperCase();
