@@ -3,25 +3,42 @@ const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const S={
   name:localStorage.getItem('kisai.name')||'',
-  profile:null,room:null,events:[],selectedEvent:null,crafting:null,
+  profile:null,room:null,events:[],selectedEvent:null,crafting:null,inventoryFilter:'all',marketQuery:'',health:null,rotationTimer:null,
   volume:Number(localStorage.getItem('kisai.musicVolume')||32)/100,
   audio:null,music:null
 };
 
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const api=async(path,opts={})=>{
-  const r=await fetch(path,{headers:{'content-type':'application/json',...(opts.headers||{})},...opts});
+  let r;
+  try{r=await fetch(path,{headers:{'content-type':'application/json',...(opts.headers||{})},...opts});setConnection(true)}
+  catch(cause){setConnection(false);const e=new Error('network_offline');e.cause=cause;throw e}
   let d={};try{d=await r.json()}catch{}
   if(!r.ok){const e=new Error(d.error||d.message||('HTTP '+r.status));e.data=d;e.status=r.status;throw e}
   return d;
 };
 const toast=m=>{const e=$('#toast');if(!e)return;e.textContent=m;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2200)};
-const show=id=>{$$('.screen').forEach(e=>e.classList.toggle('active',e.id===id));$$('.navBtn').forEach(e=>e.classList.toggle('active',e.dataset.nav===id))};
+const show=id=>{$('.screen').forEach(e=>e.classList.toggle('active',e.id===id));$('.navBtn').forEach(e=>e.classList.toggle('active',e.dataset.nav===id));document.body.dataset.screen=id;window.scrollTo({top:0,behavior:'instant'})};
 const modal=(id,on=true)=>$(id)?.classList.toggle('hidden',!on);
 const setName=n=>{S.name=(n||'').trim()||'Игрок';localStorage.setItem('kisai.name',S.name)};
 const wait=async(ms=360)=>{const e=$('#transition');e?.classList.add('active');await new Promise(r=>setTimeout(r,ms));e?.classList.remove('active')};
 const money=e=>e?.entry?.type==='free'?'БЕСПЛАТНО':('$'+((e?.entry?.price_cents||0)/100).toFixed(2));
 const tier=e=>'◆'.repeat(Math.max(1,e?.danger_tier||1));
+function setConnection(online,health=S.health){
+  const pill=$('#connectionPill'),banner=$('#globalStatus');if(!pill)return;
+  pill.classList.toggle('offline',!online);pill.classList.toggle('online',online);
+  const label=pill.querySelector('span');if(label)label.textContent=online?'ONLINE':'OFFLINE';
+  if(health){pill.title='Runtime '+health.version+' · LLM '+(health.llm?'ready':'fallback')+' · STT '+(health.stt?'ready':'off')+' · TTS '+(health.tts?'ready':'off')}
+  if(banner){banner.classList.toggle('hidden',online);banner.textContent=online?'':'Сервер недоступен. Игровые действия временно остановлены.'}
+}
+async function pollHealth(){
+  try{S.health=await api('/api/health');setConnection(true,S.health)}catch{setConnection(false)}
+}
+function setVoiceState(label,state='idle'){
+  const box=$('#voiceStatus');if(!box)return;box.dataset.state=state;box.innerHTML='<span></span>'+esc(label);
+}
+function duckMusic(on){if(S.audio)S.audio.volume=on?Math.max(.02,S.volume*.28):S.volume}
+
 const MAP_POSITIONS=[
   [18,27],[43,18],[72,26],[31,48],[58,45],[82,54],[19,72],[47,76],[73,77]
 ];
@@ -154,11 +171,14 @@ function renderCharacterRoster(){
 function stashLabel(i){return i.stackable?(esc(i.name)+' ×'+(i.quantity||1)):(esc(i.name)+' · '+(i.rarity||''))}
 function renderStash(){
   const g=$('#inventoryGrid');if(!g||!S.profile)return;
-  const items=S.profile.inventory||[];
+  const rank={common:0,uncommon:1,rare:2,epic:3,relic:4,mythic:5},equipped=new Set(Object.values(S.profile.equipped||{}).filter(Boolean));
+  let items=[...(S.profile.inventory||[])];
+  if(S.inventoryFilter==='rare')items=items.filter(i=>i.kind==='equipment'&&(rank[i.rarity]??0)>=2);
+  if(S.inventoryFilter==='equipped')items=items.filter(i=>equipped.has(i.id));
   g.innerHTML=items.length?items.map(i=>{
     if(i.kind==='equipment')return itemCard(i);
     return '<div class="stashStack"><small>'+esc(i.kind||'material')+'</small><b>'+esc(i.name)+'</b><strong>×'+(i.quantity||1)+'</strong><span>'+esc(i.catalogId||'')+'</span></div>';
-  }).join(''):'<div class="emptyState">Склад пуст.</div>';
+  }).join(''):'<div class="emptyState">В этом разделе предметов нет.</div>';
   bindItemInspector();
 }
 function renderTransactions(){
@@ -169,46 +189,58 @@ function renderTransactions(){
 
 function itemCard(i,listing=null){
   const ench=(i.enchantments||[]).length?'<span class="enchantedMark">✦ '+i.enchantments.length+'</span>':'';
-  return '<button class="itemCard rarity-'+esc(i.rarity||'common')+'" data-item="'+esc(i.id)+'">'+ench+
+  return '<button class="itemCard rarity-'+esc(i.rarity||'common')+'" data-item="'+esc(i.id)+'" '+(listing?'data-listing="'+esc(listing.id)+'"':'')+'>'+ench+
     '<small>'+esc(i.rarity||i.kind||'item')+' · LVL '+(i.level||1)+'</small><h4>'+esc(i.name)+'</h4><p>'+esc(i.slot||'')+' · power '+(i.power||0)+'</p>'+
-    (listing?'<strong>'+listing.price+' KAI</strong>':'<span>'+esc(i.serial||'')+'</span>')+'</button>';
+    (listing?'<strong>'+listing.price+' KAI</strong><span>'+esc(i.serial||'NO SERIAL')+'</span>':'<span>'+esc(i.serial||'')+'</span>')+'</button>';
+}
+function openItemInspector(i,{listing=null}={}){
+  if(!i)return;
+  const epic=['epic','relic','mythic'].includes(i.rarity),equipped=Object.values(S.profile?.equipped||{}).includes(i.id);
+  const ench=(i.enchantments||[]).map(x=>'<div class="enchantHistory"><b>'+esc(x.facility)+'</b><span>Q'+x.quality+' · '+x.effects.map(e=>esc(e.label)+' +'+e.value).join(', ')+'</span></div>').join('');
+  const adaptive=i.adaptiveFor?'<div class="itemMetaBlock"><small>ADAPTIVE ORIGIN</small><b>'+esc(i.adaptiveFor.name||i.adaptiveFor.archetype||'Неизвестный герой')+'</b><span>'+esc(i.adaptiveFor.archetype||'')+' · LVL '+(i.adaptiveFor.level||1)+'</span></div>':'';
+  const provenance=(i.provenance||[]).slice(-8).reverse().map(x=>'<div class="provenanceRow"><b>'+esc(x.type||'event')+'</b><span>'+esc(x.eventId||x.from||x.owner||'')+'</span><time>'+new Date(x.at||Date.now()).toLocaleString()+'</time></div>').join('');
+  const market=listing?'<div class="marketInspect"><small>ЛОТ ИГРОКА</small><b>'+listing.price+' KAI</b><span>Продавец: '+esc(listing.sellerName)+'</span><span>Комиссия рынка: 2.5%</span></div>':'';
+  const owned=!listing&&(S.profile?.inventory||[]).some(x=>x.id===i.id);
+  $('#inspectorBody').innerHTML=(epic?'<div class="itemVisualCard">'+(i.visual?.url?'<img src="'+esc(i.visual.url)+'" alt="">':'<div class="visualPlaceholder"><span>✦</span><small>EPIC+ VISUAL</small></div>')+'</div>':'')+
+    '<div class="inspectorRarity">'+esc(i.rarity||i.kind||'item')+' · LVL '+(i.level||1)+'</div><h2>'+esc(i.name)+'</h2><p>'+esc(i.lore||'')+'</p><p>'+esc(i.passive||'')+'</p>'+
+    '<div class="itemCoreStats"><span>Тип <b>'+esc(i.slot||i.kind||'—')+'</b></span><span>Power <b>'+(i.power||0)+'</b></span><span>Serial <b>'+esc(i.serial||'—')+'</b></span></div>'+adaptive+market+ench+
+    (provenance?'<div class="provenance"><small>PROVENANCE</small>'+provenance+'</div>':'')+
+    '<div class="itemActions">'+(owned&&i.kind==='equipment'?'<button id="equipItem" class="softBtn">'+(equipped?'Снять':'Надеть')+'</button>':'')+(owned&&epic&&!i.visual?.url?'<button id="genItemVisual" class="softBtn">✦ Visual card</button>':'')+'</div>'+
+    (owned&&i.kind==='equipment'?'<div class="sellRow"><input id="sellPrice" type="number" min="1" placeholder="Цена KAI"><button id="sellItem" class="goldBtn">Выставить</button></div>':'');
+  $('#itemInspector').classList.remove('hidden');
+  const equip=document.getElementById('equipItem');
+  if(equip)equip.onclick=async()=>{try{S.profile=await api(equipped?'/api/profile/unequip':'/api/profile/equip',{method:'POST',body:JSON.stringify(equipped?{name:S.name,slot:i.slot}:{name:S.name,itemId:i.id})});renderProfile();$('#itemInspector').classList.add('hidden');toast(equipped?'Предмет снят':'Предмет экипирован')}catch(e){toast(e.message)}};
+  const gv=document.getElementById('genItemVisual');
+  if(gv)gv.onclick=async()=>{try{const d=await api('/api/items/'+i.id+'/visual',{method:'POST',body:JSON.stringify({name:S.name})});i.visual=d.visual;renderStash();openItemInspector(i);toast('Visual card создана')}catch(e){toast(e.message)}};
+  const sell=document.getElementById('sellItem');
+  if(sell)sell.onclick=async()=>{const price=Number(document.getElementById('sellPrice')?.value);if(!price)return toast('Укажи цену');try{await api('/api/market/list',{method:'POST',body:JSON.stringify({name:S.name,itemId:i.id,price})});await loadProfile();await loadMarket();$('#itemInspector').classList.add('hidden');toast('Лот выставлен')}catch(e){toast(e.message)}};
 }
 function bindItemInspector(){
-  $$('.itemCard').forEach(c=>c.onclick=()=>{
-    const i=(S.profile?.inventory||[]).find(x=>x.id===c.dataset.item);if(!i)return;
-    const epic=['epic','relic','mythic'].includes(i.rarity);
-    const ench=(i.enchantments||[]).map(x=>'<div class="enchantHistory"><b>'+esc(x.facility)+'</b><span>Q'+x.quality+' · '+x.effects.map(e=>esc(e.label)+' +'+e.value).join(', ')+'</span></div>').join('');
-    $('#inspectorBody').innerHTML=(epic?'<div class="itemVisualCard">'+(i.visual?.url?'<img src="'+esc(i.visual.url)+'" alt="">':'<div class="visualPlaceholder"><span>✦</span><small>EPIC+ VISUAL</small></div>')+'</div>':'')+
-      '<small>'+esc(i.rarity||'')+'</small><h2>'+esc(i.name)+'</h2><p>'+esc(i.lore||'')+'</p><p>'+esc(i.passive||'')+'</p>'+ench+'<code>'+esc(i.serial||'')+'</code>'+
-      '<div class="itemActions">'+(epic&&!i.visual?.url?'<button id="genItemVisual" class="softBtn">✦ Visual card</button>':'')+'</div>'+
-      '<div class="sellRow"><input id="sellPrice" type="number" min="1" placeholder="Цена KAI"><button id="sellItem" class="goldBtn">Выставить</button></div>';
-    $('#itemInspector').classList.remove('hidden');
-    const gv=document.getElementById('genItemVisual');
-    if(gv)gv.onclick=async()=>{try{const d=await api('/api/items/'+i.id+'/visual',{method:'POST',body:JSON.stringify({name:S.name})});i.visual=d.visual;renderStash();$('#itemInspector').classList.add('hidden');toast('Visual card создана')}catch(e){toast(e.message)}};
-    const sell=document.getElementById('sellItem');
-    if(sell)sell.onclick=async()=>{const price=Number(document.getElementById('sellPrice')?.value);if(!price)return toast('Укажи цену');try{await api('/api/market/list',{method:'POST',body:JSON.stringify({name:S.name,itemId:i.id,price})});await loadProfile();await loadMarket();$('#itemInspector').classList.add('hidden');toast('Лот выставлен')}catch(e){toast(e.message)}};
-  });
+  $$('#inventoryGrid .itemCard').forEach(c=>c.onclick=()=>openItemInspector((S.profile?.inventory||[]).find(x=>x.id===c.dataset.item)));
 }
 
 async function loadCrafting(){
   if(!S.crafting)S.crafting=await api('/api/crafting');
   const g=$('#craftGrid');if(!g||!S.profile)return;
+  const effectLabel={heal_wound:'Лечит 1 рану',traversal:'Инструмент перемещения',escape:'Помогает выйти из опасной сцены',roll_bonus:'Бонус к следующему броску'};
+  const owned=id=>S.profile.inventory.find(x=>x.catalogId===id)?.quantity||0;
   g.innerHTML=(S.crafting.recipes||[]).map(r=>{
-    const cost=Object.entries(r.cost||{}).map(([id,n])=>esc(S.crafting.materials?.[id]?.name||id)+' ×'+n).join(' · ');
-    return '<div class="craftCard"><small>РАСХОДНИК</small><h4>'+esc(r.name)+'</h4><p>'+cost+'</p><button class="goldBtn mini craftBtn" data-id="'+r.id+'">Создать</button></div>';
+    const parts=Object.entries(r.cost||{}).map(([id,n])=>{const have=owned(id),ok=have>=n;return '<span class="ingredient '+(ok?'have':'missing')+'">'+esc(S.crafting.materials?.[id]?.name||id)+' <b>'+have+'/'+n+'</b></span>'});
+    const can=Object.entries(r.cost||{}).every(([id,n])=>owned(id)>=n),effect=r.output?.effect||{};
+    return '<div class="craftCard"><small>РАСХОДНИК</small><h4>'+esc(r.name)+'</h4><p class="craftEffect">'+esc(effectLabel[effect.type]||effect.type||'Расходуемый предмет')+(effect.value?' · '+effect.value:'')+'</p><div class="ingredientList">'+parts.join('')+'</div><button class="goldBtn mini craftBtn" data-id="'+r.id+'" '+(can?'':'disabled')+'>'+(can?'Создать':'Не хватает ресурсов')+'</button></div>';
   }).join('');
-  $$('.craftBtn',g).forEach(b=>b.onclick=async()=>{try{const d=await api('/api/profile/craft',{method:'POST',body:JSON.stringify({name:S.name,recipeId:b.dataset.id,quantity:1})});S.profile=d.profile;renderProfile();loadCrafting();toast('Создано: '+d.item.name)}catch(e){toast(e.message)}});
+  $$('.craftBtn',g).forEach(b=>b.onclick=async()=>{try{b.disabled=true;const d=await api('/api/profile/craft',{method:'POST',body:JSON.stringify({name:S.name,recipeId:b.dataset.id,quantity:1})});S.profile=d.profile;renderProfile();await loadCrafting();toast('Создано: '+d.item.name)}catch(e){toast(e.message);b.disabled=false}});
 }
-
 async function loadMarket(){
   const g=$('#marketGrid');if(!g)return;
-  const a=await api('/api/market');
+  const all=await api('/api/market'),q=normalize(S.marketQuery);
+  const a=q?all.filter(l=>normalize([l.item?.name,l.item?.serial,l.sellerName,l.item?.rarity].join(' ')).includes(q)):all;
   g.innerHTML=a.length?a.map(l=>'<div class="marketCard">'+itemCard(l.item,l)+'<div class="sellerRow"><span>'+esc(l.sellerName)+'</span>'+
-    (l.sellerId===S.profile?.id?'<button class="softBtn mini cancelBtn" data-id="'+l.id+'">Снять</button>':'<button class="goldBtn mini buyBtn" data-id="'+l.id+'">Купить</button>')+'</div></div>').join(''):'<div class="emptyState">Активных лотов нет.</div>';
-  $$('.buyBtn',g).forEach(b=>b.onclick=async e=>{e.stopPropagation();try{const d=await api('/api/market/buy',{method:'POST',body:JSON.stringify({name:S.name,listingId:b.dataset.id})});S.profile=d.profile;renderProfile();loadMarket();toast('Предмет куплен')}catch(x){toast(x.message)}});
-  $$('.cancelBtn',g).forEach(b=>b.onclick=async e=>{e.stopPropagation();try{const d=await api('/api/market/cancel',{method:'POST',body:JSON.stringify({name:S.name,listingId:b.dataset.id})});S.profile=d.profile;renderProfile();loadMarket();toast('Лот снят')}catch(x){toast(x.message)}});
+    (l.sellerId===S.profile?.id?'<button class="softBtn mini cancelBtn" data-id="'+l.id+'">Снять</button>':'<button class="goldBtn mini buyBtn" data-id="'+l.id+'">Купить</button>')+'</div></div>').join(''):'<div class="emptyState">'+(q?'По этому запросу лотов нет.':'Активных лотов нет.')+'</div>';
+  $$('.marketCard .itemCard',g).forEach(c=>{const l=a.find(x=>x.id===c.dataset.listing);c.onclick=()=>openItemInspector(l?.item,{listing:l})});
+  $$('.buyBtn',g).forEach(b=>b.onclick=async e=>{e.stopPropagation();try{b.disabled=true;const d=await api('/api/market/buy',{method:'POST',body:JSON.stringify({name:S.name,listingId:b.dataset.id})});S.profile=d.profile;renderProfile();await loadMarket();toast('Предмет куплен')}catch(x){toast(x.message);b.disabled=false}});
+  $$('.cancelBtn',g).forEach(b=>b.onclick=async e=>{e.stopPropagation();try{b.disabled=true;const d=await api('/api/market/cancel',{method:'POST',body:JSON.stringify({name:S.name,listingId:b.dataset.id})});S.profile=d.profile;renderProfile();await loadMarket();toast('Лот снят')}catch(x){toast(x.message);b.disabled=false}});
 }
-
 function renderRoom(){
   if(!S.room)return;
   $('#lobbyCode').textContent=S.room.code||'';
@@ -246,12 +278,14 @@ function renderGame(result=null){
   $('#sceneTitle').textContent=sc.title||event?.title||'Текущая сцена';
   $('#gmText').textContent=sc.narration||'';
   $('#gameScenarioLabel').textContent=(event?.title||'KISAI WORLD').toUpperCase()+' · T'+(event?.danger_tier||1);
-  const progress=Math.round(r.progress||0);$('#runProgressText').textContent=progress+'%';$('#runProgressFill').style.width=progress+'%';$('#extractRun').disabled=progress<100||r.completed;
+  const progress=Math.round(r.progress||0);$('#runProgressText').textContent=progress+'%';$('#runProgressFill').style.width=progress+'%';$('#extractRun').disabled=progress<100||r.completed;$('#extractRun').textContent=r.completed?'Завершено':progress>=100?'Эвакуироваться':'Эвакуация '+progress+'%';
   $('#party').innerHTML=(r.players||[]).map((p,i)=>'<div class="partyMember '+(!p.alive?'dead':'')+'"><b>'+esc(p.name)+'</b><small>'+(p.character?esc(p.character.name||p.character.archetype)+' · '+p.wounds+'/3 раны':'Без героя')+'</small><span>'+(i===r.turnIndex?'ХОД':'')+'</span></div>').join('');
   const me=myRoomPlayer();
   if($('#myStats'))$('#myStats').innerHTML=me?'<small>ТВОЙ ГЕРОЙ</small><b>'+esc(me.character?.name||me.character?.archetype||'—')+'</b><span>Раны '+me.wounds+'/3 · Рюкзак '+me.runUsage+'/'+me.capacity+'</span>':'';
+  const ctx=$('#sceneContext');if(ctx)ctx.innerHTML='<small>ТЕКУЩАЯ ПОЗИЦИЯ</small><b>'+esc(me?.position?.anchorId||'canonical scene')+'</b><span>'+esc(event?.genre||'Экспедиция')+' · опасность T'+(event?.danger_tier||1)+'</span>';
   renderRunInventory();
   renderSceneLoot();
+  renderActionLog();
   if(result?.dice)animateDice(result.dice);
   music(sc.music_state||'explore');
   renderPOV();
@@ -281,16 +315,21 @@ function renderRunInventory(){
     }
   }
 }
+function renderActionLog(){
+  const box=$('#log');if(!box)return;const rows=S.room?.log||[];
+  box.innerHTML=rows.length?rows.map(x=>'<div class="actionLogRow"><div><time>'+new Date(x.at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</time><b>'+esc(x.actor)+'</b></div><span>'+esc(x.action)+'</span>'+(x.roll?'<em class="'+(x.roll.success?'success':'fail')+'">d20 '+x.roll.die+' → '+x.roll.total+' / DC '+x.roll.dc+'</em>':'')+'</div>').join(''):'<div class="emptyState compact">Ходов пока нет.</div>';
+}
 async function renderPOV(){
   if(!S.room||!S.name)return;
-  try{const p=await api('/api/rooms/'+S.room.code+'/pov?name='+encodeURIComponent(S.name)),box=$('#log');if(!box)return;box.innerHTML='<div class="povCard"><small>PERSONAL POV</small><b>'+esc(p.camera.anchorId||'scene')+'</b><span>'+p.visibleAnchors.map(a=>esc(a.label)).join(' · ')+'</span></div>'}catch{}
+  try{const p=await api('/api/rooms/'+S.room.code+'/pov?name='+encodeURIComponent(S.name)),box=$('#log');if(!box)return;box.insertAdjacentHTML('afterbegin','<div class="povCard"><small>PERSONAL POV</small><b>'+esc(p.camera.anchorId||'scene')+'</b><span>'+p.visibleAnchors.map(a=>esc(a.label)).join(' · ')+'</span></div>')}catch{}
 }
 function applyTurn(d){
   S.room=d.room;S.profile=d.profile;renderProfile();renderGame(d);
   if(d.deathDrop?.length)toast('Персонаж погиб. В сцене осталось '+d.deathDrop.length+' предметов.');
   else if(d.transcript)toast('Распознано: '+d.transcript.slice(0,80));
   else if(d.drops?.length)toast('Найдено: '+d.drops.map(x=>x.name).join(', '));
-  if(d.speechBase64){try{const a=new Audio('data:'+(d.speechMime||'audio/mpeg')+';base64,'+d.speechBase64);if(S.audio)S.audio.volume=S.volume*.25;a.onended=()=>{if(S.audio)S.audio.volume=S.volume};a.play().catch(()=>{})}catch{}}
+  if(d.speechBase64){try{setVoiceState('GM отвечает…','speaking');const a=new Audio('data:'+(d.speechMime||'audio/mpeg')+';base64,'+d.speechBase64);duckMusic(true);a.onended=()=>{duckMusic(false);setVoiceState('Ожидание хода','idle')};a.onerror=()=>{duckMusic(false);setVoiceState('Ожидание хода','idle')};a.play().catch(()=>{duckMusic(false);setVoiceState('Ожидание хода','idle')})}catch{duckMusic(false);setVoiceState('Ожидание хода','idle')}}
+  else{duckMusic(false);setVoiceState('Ожидание хода','idle')}
 }
 
 async function music(name){
@@ -305,12 +344,12 @@ function setupVoice(){
   const begin=async e=>{e.preventDefault();if(rec?.state==='recording'||!S.room)return;try{
     stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});chunks=[];rec=new MediaRecorder(stream);started=Date.now();
     rec.ondataavailable=x=>{if(x.data.size)chunks.push(x.data)};
-    rec.onstop=async()=>{btn.classList.remove('recording');stream?.getTracks().forEach(t=>t.stop());if(Date.now()-started<350)return toast('Слишком короткая запись');try{
+    rec.onstop=async()=>{btn.classList.remove('recording');stream?.getTracks().forEach(t=>t.stop());if(Date.now()-started<350){duckMusic(false);setVoiceState('Слишком короткая запись','error');setTimeout(()=>setVoiceState('Ожидание хода','idle'),1400);return toast('Слишком короткая запись')}setVoiceState('Распознаю речь…','processing');try{
       const blob=new Blob(chunks,{type:rec.mimeType||'audio/webm'}),audioBase64=await blobBase64(blob);
       const d=await api('/api/rooms/'+S.room.code+'/voice-turn',{method:'POST',body:JSON.stringify({name:S.name,audioBase64,mimeType:blob.type||'audio/webm'})});applyTurn(d);
-    }catch(x){toast(x.message==='stt_not_configured'?'Настрой STT API в ⚙ AI':x.message)}};
-    rec.start();btn.classList.add('recording');
-  }catch{toast('Нет доступа к микрофону')}};
+    }catch(x){duckMusic(false);setVoiceState('Ошибка голосового хода','error');toast(x.message==='stt_not_configured'?'Настрой STT API в ⚙ AI':x.message);setTimeout(()=>setVoiceState('Ожидание хода','idle'),1600)}};
+    rec.start();btn.classList.add('recording');duckMusic(true);setVoiceState('Говори — запись идёт','recording');
+  }catch{duckMusic(false);setVoiceState('Нет доступа к микрофону','error');toast('Нет доступа к микрофону')}};
   const end=e=>{e?.preventDefault();if(rec?.state==='recording')rec.stop()};
   btn.addEventListener('pointerdown',begin);window.addEventListener('pointerup',end);window.addEventListener('pointercancel',end);
 }
@@ -331,7 +370,7 @@ function setupMediaFallbacks(){
 async function init(){
   setupMediaFallbacks();
   $('#playerName').value=S.name;$('#joinName').value=S.name;
-  if(S.name)await loadProfile();await loadEvents();startRotationClock();music('menu');
+  if(S.name)await loadProfile();await loadEvents();startRotationClock();await pollHealth();setInterval(pollHealth,12000);music('menu');
 
   $('#brandBtn').onclick=()=>show('home');
   $('#hostBtn').onclick=()=>show('setup');
@@ -342,7 +381,9 @@ async function init(){
   $$('.back').forEach(b=>b.onclick=()=>show('home'));
   $$('.navBtn[data-nav]').forEach(b=>b.onclick=async()=>{if(b.dataset.nav==='setup'){if(S.name)await loadProfile();await loadEvents()}show(b.dataset.nav)});
   $$('.navBtn[data-econ]').forEach(b=>b.onclick=()=>econTab(b.dataset.econ));
-  $$('.econTab').forEach(b=>b.onclick=()=>econTab(b.dataset.tab));
+  $('.econTab').forEach(b=>b.onclick=()=>econTab(b.dataset.tab));
+  $('.filterChip').forEach(b=>b.onclick=()=>{S.inventoryFilter=b.dataset.rarity||'all';$('.filterChip').forEach(x=>x.classList.toggle('active',x===b));renderStash()});
+  $('#marketSearch').oninput=e=>{S.marketQuery=e.target.value;loadMarket()};
 
   $('#createRoom').onclick=async()=>{try{
     setName($('#playerName').value);await loadProfile();
@@ -366,7 +407,7 @@ async function init(){
     S.room=await api('/api/rooms/'+S.room.code+'/start',{method:'POST',body:'{}'});renderGame();await wait(550);show('game');
   }catch(e){toast(e.message==='payment_required'?'У одного из игроков нет доступа к событию':e.message)}};
 
-  $('#sendText').onclick=async()=>{const input=$('#textTurn'),action=input.value.trim();if(!action)return;input.value='';try{applyTurn(await api('/api/rooms/'+S.room.code+'/turn',{method:'POST',body:JSON.stringify({name:S.name,action})}))}catch(e){toast(e.message)}};
+  $('#sendText').onclick=async()=>{const input=$('#textTurn'),button=$('#sendText'),action=input.value.trim();if(!action||button.disabled)return;input.value='';input.disabled=true;button.disabled=true;setVoiceState('GM разрешает действие…','processing');try{applyTurn(await api('/api/rooms/'+S.room.code+'/turn',{method:'POST',body:JSON.stringify({name:S.name,action})}))}catch(e){setVoiceState('Ход не выполнен','error');toast(e.message);setTimeout(()=>setVoiceState('Ожидание хода','idle'),1500)}finally{input.disabled=false;button.disabled=false;input.focus()}};
   $('#textTurn').onkeydown=e=>{if(e.key==='Enter')$('#sendText').click()};
   $('#extractRun').onclick=async()=>{try{const d=await api('/api/rooms/'+S.room.code+'/extract',{method:'POST',body:JSON.stringify({name:S.name})});S.room=d.room;S.profile=d.profile;renderProfile();renderGame();const mine=d.rewards.find(x=>x.profileId===S.profile.id);toast(mine?'Эвакуация успешна · +'+mine.xp+' XP · '+mine.unique.length+' уник. предметов':'Приключение завершено')}catch(e){toast(e.message==='objectives_incomplete'?'Сначала заверши цели: '+(e.data?.progress||0)+'%':e.message)}};
   $('#copyLink').onclick=()=>navigator.clipboard?.writeText(location.origin+'?room='+(S.room?.code||'')).then(()=>toast('Ссылка скопирована'));
