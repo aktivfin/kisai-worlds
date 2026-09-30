@@ -55,7 +55,21 @@
 
     <section id="setup" class="screen setupScreen">
       <div class="sectionHead"><button class="back iconBtn">←</button><div><p class="eyebrow">КАРТА МИРА · РОТАЦИЯ СОБЫТИЙ</p><h2>Выбери приключение</h2></div><div class="stepPill">01 / 03</div></div>
-      <div class="eventRules glass"><span>Сложность события фиксирована</span><span>1–5 игроков</span><span>Меньше группа → выше риск и награда</span><span>Permadeath</span></div><div id="scenarioGrid" class="scenarioGrid"></div>
+      <div class="eventRules glass"><span>Сложность события фиксирована</span><span>1–5 игроков</span><span>Меньше группа → выше риск и награда</span><span>Permadeath</span></div>
+      <div class="worldMapShell">
+        <div class="eventMapStage glass">
+          <div class="eventMapBackdrop"></div>
+          <div class="mapOrbit mapOrbitA"></div><div class="mapOrbit mapOrbitB"></div><div class="mapOrbit mapOrbitC"></div>
+          <div class="eventMapHeader">
+            <div><small>АКТИВНЫЕ ЭКСПЕДИЦИИ</small><b><span id="activeEventCount">0</span> событий в ротации</b></div>
+            <div class="rotationClock"><small>РОТАЦИЯ ЧЕРЕЗ</small><b id="eventRotationTime">--:--:--</b></div>
+          </div>
+          <div id="eventMapNodes" class="eventMapNodes" aria-label="Карта активных событий"></div>
+          <div class="eventLegend"><span><i class="legendDot recon"></i>Разведка</span><span><i class="legendDot loot"></i>Добыча</span><span><i class="legendDot boss"></i>Босс</span><span><i class="legendDot anomaly"></i>Аномалия</span></div>
+        </div>
+        <aside id="eventDetailPanel" class="eventDetailPanel glass"></aside>
+      </div>
+      <div id="scenarioGrid" class="scenarioGrid eventCardRail"></div>
       <div class="setupBottom glass"><label><span>Имя игрока</span><input id="playerName" placeholder="Например, Артём" maxlength="24"></label><label><span>Персонаж</span><select id="eventCharacterSelect"><option value="">Создать нового в лобби</option></select></label><div id="eventAccess" class="eventAccess"></div><button id="createRoom" class="goldBtn">Создать лобби <span>→</span></button></div>
     </section>
 
