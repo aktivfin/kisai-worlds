@@ -22,6 +22,35 @@ const setName=n=>{S.name=(n||'').trim()||'Игрок';localStorage.setItem('kisa
 const wait=async(ms=360)=>{const e=$('#transition');e?.classList.add('active');await new Promise(r=>setTimeout(r,ms));e?.classList.remove('active')};
 const money=e=>e?.entry?.type==='free'?'БЕСПЛАТНО':('$'+((e?.entry?.price_cents||0)/100).toFixed(2));
 const tier=e=>'◆'.repeat(Math.max(1,e?.danger_tier||1));
+const MAP_POSITIONS=[
+  [18,27],[43,18],[72,26],[31,48],[58,45],[82,54],[19,72],[47,76],[73,77]
+];
+const eventGlyph=e=>{
+  const t=((e?.genre||'')+' '+(e?.title||'')).toLowerCase();
+  if(/босс|дракон|собор|храм/.test(t))return '♜';
+  if(/аном|разлом|пустот/.test(t))return '◉';
+  if(/архив|исслед|станц/.test(t))return '◇';
+  if(/лес|спас|эвак/.test(t))return '✦';
+  if(/пес|конвой|ресурс/.test(t))return '⬡';
+  return '◆';
+};
+const eventClass=e=>{
+  const t=((e?.genre||'')+' '+(e?.title||'')).toLowerCase();
+  if(/босс/.test(t))return 'boss';
+  if(/аном|разлом|пустот/.test(t))return 'anomaly';
+  if(/добыч|артеф|ресурс/.test(t))return 'loot';
+  return 'recon';
+};
+function rotationRemaining(){
+  const cycle=6*60*60*1000, left=cycle-(Date.now()%cycle);
+  const h=Math.floor(left/3600000),m=Math.floor((left%3600000)/60000),s=Math.floor((left%60000)/1000);
+  return [h,m,s].map(n=>String(n).padStart(2,'0')).join(':');
+}
+function startRotationClock(){
+  const draw=()=>{const el=$('#eventRotationTime');if(el)el.textContent=rotationRemaining()};
+  draw(); if(!S.rotationTimer)S.rotationTimer=setInterval(draw,1000);
+}
+
 
 async function loadEvents(){
   S.events=await api('/api/events');
@@ -29,10 +58,10 @@ async function loadEvents(){
   renderEvents();
 }
 function renderEvents(){
-  const g=$('#scenarioGrid');if(!g)return;
-  g.innerHTML=S.events.map((e,i)=>{
+  const g=$('#scenarioGrid'),map=$('#eventMapNodes'),detail=$('#eventDetailPanel');
+  const cards=S.events.map((e,i)=>{
     const selected=e.id===S.selectedEvent;
-    return '<button class="scenarioCard '+(selected?'selected':'')+'" data-id="'+esc(e.id)+'">'+
+    return '<button class="scenarioCard '+(selected?'selected':'')+'" data-id="'+esc(e.id)+'" data-event-id="'+esc(e.id)+'">'+
       '<span class="scenarioIndex">'+String(i+1).padStart(2,'0')+'</span>'+
       '<small>'+esc(e.genre)+' · '+esc(e.duration)+'</small>'+
       '<h3>'+esc(e.title)+'</h3>'+
@@ -40,7 +69,32 @@ function renderEvents(){
       '<p>'+esc(e.intro)+'</p>'+
       '<div><span>Лут T'+e.loot_tier+' · '+e.inventory_slots+' слотов</span><b>Выбрать →</b></div></button>';
   }).join('');
-  $$('.scenarioCard',g).forEach(c=>c.onclick=()=>{S.selectedEvent=c.dataset.id;renderEvents();renderEventAccess()});
+  if(g)g.innerHTML=cards;
+
+  if(map){
+    map.innerHTML=S.events.map((e,i)=>{
+      const p=MAP_POSITIONS[i%MAP_POSITIONS.length],selected=e.id===S.selectedEvent,kind=eventClass(e);
+      return '<button class="eventMapNode '+kind+' '+(selected?'selected':'')+'" style="--map-x:'+p[0]+'%;--map-y:'+p[1]+'%" data-event-id="'+esc(e.id)+'" aria-label="'+esc(e.title)+'">'+
+        '<span class="nodePulse"></span><span class="nodeGlyph">'+eventGlyph(e)+'</span><span class="nodeCopy"><b>'+esc(e.title)+'</b><small>'+tier(e)+' · '+e.recommended_players+'/5 · '+money(e)+'</small></span></button>';
+    }).join('');
+  }
+
+  const e=selectedEvent();
+  if(detail&&e){
+    const fixed='T'+e.danger_tier+' · фиксированная';
+    detail.innerHTML=
+      '<div class="eventDetailVisual '+eventClass(e)+'"><div class="eventDetailBadge">'+eventGlyph(e)+'</div><div><small>ВЫБРАННОЕ СОБЫТИЕ</small><h3>'+esc(e.title)+'</h3><p>'+esc(e.genre)+'</p></div></div>'+
+      '<div class="eventDetailBody"><p class="eventIntro">'+esc(e.intro)+'</p>'+
+      '<div class="eventStatGrid"><div><small>ОПАСНОСТЬ</small><b>'+tier(e)+'</b><span>'+fixed+'</span></div><div><small>ОТРЯД</small><b>'+e.recommended_players+'/5</b><span>можно идти меньшей группой</span></div><div><small>ДЛИТЕЛЬНОСТЬ</small><b>'+esc(e.duration)+'</b><span>ориентир</span></div><div><small>ВХОД</small><b>'+money(e)+'</b><span>'+esc(e.entry?.type||'event')+'</span></div></div>'+
+      '<div class="eventRewardBox"><div><small>ПОТЕНЦИАЛ НАГРАДЫ</small><b>Loot Tier '+e.loot_tier+'</b></div><span>'+e.inventory_slots+' слотов рюкзака</span></div>'+
+      '<div class="fixedWarning"><b>△ Сложность не масштабируется вниз</b><span>Меньшая группа получает больший риск и повышенную награду, а не более лёгких врагов.</span></div>'+
+      '<button id="prepareSelectedEvent" class="goldBtn wide eventPrepareBtn">Подготовить экспедицию →</button></div>';
+    const prep=$('#prepareSelectedEvent');
+    if(prep)prep.onclick=()=>{document.querySelector('.setupBottom')?.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(()=>$('#playerName')?.focus(),350)};
+  }
+
+  const count=$('#activeEventCount');if(count)count.textContent=S.events.length;
+  $$('[data-event-id]').forEach(c=>c.onclick=()=>{S.selectedEvent=c.dataset.eventId;renderEvents();renderEventAccess()});
   renderEventAccess();
 }
 function selectedEvent(){return S.events.find(e=>e.id===S.selectedEvent)||null}
@@ -268,7 +322,7 @@ function econTab(name){
 
 async function init(){
   $('#playerName').value=S.name;$('#joinName').value=S.name;
-  if(S.name)await loadProfile();await loadEvents();music('menu');
+  if(S.name)await loadProfile();await loadEvents();startRotationClock();music('menu');
 
   $('#brandBtn').onclick=()=>show('home');
   $('#hostBtn').onclick=()=>show('setup');
