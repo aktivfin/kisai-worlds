@@ -99,7 +99,8 @@ try {
   expiredFixture.rooms[code].timer.deadlineAt=Date.now()-1;atomicWrite(state,expiredFixture);await launch();
   let timed=await must('/api/rooms/'+code,A.token);
   for(let n=0;n<20&&timed.turnIndex===1;n++){await sleep(80);timed=await must('/api/rooms/'+code,A.token)}
-  assert.equal(timed.turnIndex,2);assert.equal(timed.log[0].event,'TIMER_EXPIRED');
+  assert.equal(timed.turnIndex,2);assert.ok(timed.log.some(x=>x.event==='TIMER_EXPIRED'));
+  assert.ok(loadState(state,{}).rooms[code].log.some(x=>x.event?.startsWith('NPC_')),'NPC acts when disconnected player times out');
   await stop();const spamFixture=loadState(state,{});spamFixture.rooms[code].progress=100;atomicWrite(state,spamFixture);await launch();
   const spam=await must('/api/rooms/'+code,A.token);assert.equal(spam.progress,100);
   assert.equal((await call('/api/rooms/'+code+'/extract',A.token,{})).data.error,'objectives_incomplete');

@@ -176,6 +176,17 @@ function dropCharacterInventory(r,p){
   const c=p.characters.find(x=>x.id===player.characterId);if(c){c.status='dead';c.deathAt=now();c.deathEventId=r.scenario.id}
   syncActiveCharacter(p);saveState();return dropped;
 }
+function encounterPhase(room){
+  const reaction=reactToPlayerAction(room,{nextD20,defenderFor:pl=>playerCombatDefender(pl.profile,pl),dropInventory:dropCharacterInventory});
+  for(const event of reaction.events)room.log.unshift({at:now(),event:event.type,npcId:event.npcId,
+    position:{...(room.scene.combatants.find(x=>x.id===event.npcId)?.position||{})},profileId:event.profileId,
+    action:event.type,narration:event.type==='NPC_MOVED'?'Угроза перемещается.':'Угроза действует.',combat:event.combat});
+  if(![...room.players.values()].some(x=>x.alive)){
+    room.completed=true;room.outcome='wipe';room.timer=null;
+    for(const item of room.scene.loot){item.status='lost';if(item.world)item.world.state='lost'}room.scene.loot=[];
+  }
+  return reaction;
+}
 function isAttackAction(action=''){
   return /атак|бью|удар|реж|разрез|руб|колю|стрел|выстрел|кастаю.*(огн|молни|луч)|пинаю|кулаком/i.test(action);
 }
@@ -286,7 +297,7 @@ async function commitCombatTurn(r,p,action,{targetId=null,abilityId=null,targetA
   const skillGrowth=ability.skill?recordSkillUse(character,{name:ability.skill,attribute:ability.attackAttribute||'agility',success:combat.hit}):null;
   let narration=combatNarrativeFallback(p,target,combat),counterattack=null,deathDrop=[];
   if(combat.hit&&ability.control){target.conditions||={};const type=ability.control.type;if(['stun','slow'].includes(type))target.conditions[type]=Math.max(target.conditions[type]||0,Math.min(2,ability.control.value||1));}
-  const reaction=reactToPlayerAction(r,{nextD20,defenderFor:pl=>playerCombatDefender(pl.profile,pl),dropInventory:dropCharacterInventory});
+  const reaction=encounterPhase(r);
   counterattack=reaction.counterattack;deathDrop=reaction.deathDrop;
   if(counterattack)narration+=' '+counterNarrative(target,counterattack);
   if(deathDrop.length)narration+=' Персонаж больше не способен продолжать бой; его походное снаряжение остаётся в сцене.';
@@ -295,10 +306,9 @@ async function commitCombatTurn(r,p,action,{targetId=null,abilityId=null,targetA
   updateObjectives(r);
   r.scene.narration=narration;r.scene.music_state=deathDrop.length?'grief':combat.killed?'discovery':'tension';r.scene.intensity=deathDrop.length?.95:combat.killed?.45:.82;
   r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,position:{...player.position},action,narration,combat,counterattack});
-  for(const event of reaction.events)r.log.unshift({at:now(),event:event.type,npcId:event.npcId,position:{...(r.scene.combatants.find(x=>x.id===event.npcId)?.position||{})},profileId:event.profileId,action:event.type,narration:event.type==='NPC_MOVED'?'Угроза перемещается.':'Угроза действует.',combat:event.combat});
   if(combat.hit)farm(p,action,r.scene.music_state);
   const alive=[...r.players.values()].filter(x=>x.alive);advanceTurn(r);r.turnIndex=(r.turnIndex||0)+1;
-  if(!alive.length){r.completed=true;r.outcome='wipe';for(const item of r.scene.loot){item.status='lost'}r.scene.loot=[]}
+  if(!alive.length){r.completed=true;r.outcome='wipe';r.timer=null}
   saveState(); // Mechanics and inventory are durable before any provider call.
   const spoken=await narrateCombatOutcome(r,p,action,target,combat);
   if(spoken!==combatNarrativeFallback(p,target,combat)){
@@ -331,12 +341,11 @@ function commitTurn(r,p,action,result){
   r.scene.narration=narration+(deathDrop.length?' Персонаж погибает, а всё взятое в поход остаётся в этой сцене.':'');
   r.scene.music_state=deathDrop.length?'grief':result.music_state||'explore';r.scene.intensity=result.danger==='lethal'?0.9:result.danger==='risky'?0.65:0.35;
   r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,position:{...player.position},action,narration:r.scene.narration,roll});
-  const reaction=reactToPlayerAction(r,{nextD20,defenderFor:pl=>playerCombatDefender(pl.profile,pl),dropInventory:dropCharacterInventory});
+  const reaction=encounterPhase(r);
   deathDrop.push(...reaction.deathDrop);
-  for(const event of reaction.events)r.log.unshift({at:now(),event:event.type,npcId:event.npcId,position:{...(r.scene.combatants.find(x=>x.id===event.npcId)?.position||{})},profileId:event.profileId,action:event.type,narration:event.type==='NPC_MOVED'?'Угроза перемещается.':'Угроза действует.',combat:event.combat});
   if(roll?.success&&result.danger!=='safe')farm(p,action,r.scene.music_state);
   const alive=[...r.players.values()].filter(x=>x.alive);r.nextTimerType=/ловуш|капкан|пада|обвал/i.test(action)?'TRAP':result.danger==='lethal'?'CRITICAL':result.danger==='risky'?'REACTION':socialAction(action)?'DIALOGUE':r.scene.combatants.some(x=>x.status!=='dead')?'COMBAT':'EXPLORATION';advanceTurn(r);r.turnIndex=(r.turnIndex||0)+1;
-  if(!alive.length){r.completed=true;r.outcome='wipe';for(const item of r.scene.loot){item.status='lost'}r.scene.loot=[]}
+  if(!alive.length){r.completed=true;r.outcome='wipe';r.timer=null}
   saveState();return{narration:r.scene.narration,music_state:r.scene.music_state,intensity:r.scene.intensity,dice:roll,skillGrowth,wounds:player.wounds,woundsAdded,deathDrop,drops,progress:r.progress};
 }
 
@@ -526,7 +535,7 @@ function enchantRunItem(room,player,targetId,ingredientIds){
     const ench={id:id('ench'),at:now(),eventId:room.scenario.id,facility:facility.label,forgeTier:facility.tier,quality,effects};
     target.enchantments.push(ench);target.provenance.push({at:now(),type:'enchanted',eventId:room.scenario.id,facility:facility.label,quality,effects});
   }else target.provenance.push({at:now(),type:'enchant_failed',eventId:room.scenario.id,facility:facility.label});
-  tickCooldowns(player);room.log.unshift({at:now(),event:'ENCHANT_RESOLVED',profileId:player.id,actor:player.name,action:'enchant',itemId:target.id,success});advanceTurn(room);room.turnIndex=(room.turnIndex||0)+1;
+  tickCooldowns(player);room.log.unshift({at:now(),event:'ENCHANT_RESOLVED',profileId:player.id,actor:player.name,position:{...player.position},action:'enchant',itemId:target.id,success});encounterPhase(room);advanceTurn(room);room.turnIndex=(room.turnIndex||0)+1;
   saveState();return{roll,item:target,success};
 }
 
@@ -703,7 +712,7 @@ function useRunItem(r,player,itemId){
   const effect=item.effect||{};consumeInventoryItem(player.runInventory,item.id,1);
   if(effect.type==='heal_wound'){player.wounds=Math.max(0,(player.wounds||0)-(Number(effect.value)||1));const c=materializeCharacterCore(player.character);c.combat.hp_current=Math.min(c.combat.hp_max,c.combat.hp_current+(Number(effect.value)||1)*4)}
   if(['roll_bonus','traversal','escape'].includes(effect.type))player.nextRollBonus=Math.max(Number(player.nextRollBonus)||0,Number(effect.value)||1);
-  tickCooldowns(player);r.log.unshift({at:now(),event:'ITEM_USED',profileId:player.id,actor:player.name,action:'use_item',itemId:item.id});advanceTurn(r);r.turnIndex=(r.turnIndex||0)+1;
+  tickCooldowns(player);r.log.unshift({at:now(),event:'ITEM_USED',profileId:player.id,actor:player.name,position:{...player.position},action:'use_item',itemId:item.id});encounterPhase(r);advanceTurn(r);r.turnIndex=(r.turnIndex||0)+1;
   saveState();return{effect,wounds:player.wounds,hp:player.character?.combat?.hp_current??player.profile?.character?.combat?.hp_current??null,nextRollBonus:player.nextRollBonus||0};
 }
 function getRoom(c){ return rooms.get(String(c||'').toUpperCase()); }
@@ -924,8 +933,8 @@ async function api(req,res,u){
       const idx=(r.scene.loot||[]).findIndex(x=>x.id===claim[2]&&x.status==='scene');if(idx<0)return json(res,404,{error:'loot_not_found'});const item=r.scene.loot[idx];
       try{assertPickup(item,r.scene,pl,inventoryUsage(pl.runInventory),stackCost(item))}catch(e){return json(res,409,{error:e.message})}
       r.scene.loot.splice(idx,1);item.status='run';item.ownerId=p.id;item.world.state='claimed';item.world.ownerId=p.id;item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'claimed_in_event',eventId:r.scenario.id,characterId:pl.characterId});pl.runInventory.push(item);
-      r.log.unshift({at:now(),event:'LOOT_CLAIMED',profileId:p.id,itemId:item.id,actor:p.name,action:'pickup',narration:p.name+' подбирает '+item.name+'.'});
-      reactToPlayerAction(r,{nextD20,defenderFor:player=>playerCombatDefender(player.profile,player),dropInventory:dropCharacterInventory});
+      r.log.unshift({at:now(),event:'LOOT_CLAIMED',profileId:p.id,itemId:item.id,position:{...pl.position},actor:p.name,action:'pickup',narration:p.name+' подбирает '+item.name+'.'});
+      encounterPhase(r);
       advanceTurn(r);r.turnIndex=(r.turnIndex||0)+1;saveState();
       return json(res,200,{item,room:roomView(r,sessionProfile(req).id),profile:publicProfile(p)});
     }
@@ -1004,6 +1013,7 @@ const server=http.createServer((req,res)=>{
 setInterval(()=>{
   for(const r of rooms.values())if(r.started&&!r.completed&&r.timer&&Date.now()>=r.timer.deadlineAt&&!busyRooms.has(r.code)){
     const expired=r.timer.playerId;r.log.unshift({at:now(),event:'TIMER_EXPIRED',profileId:expired,action:'timeout',narration:'Время хода истекло.'});
+    encounterPhase(r);
     advanceTurn(r);r.turnIndex=(r.turnIndex||0)+1;r.revision=(r.revision||0)+1;saveState();publishRoom(r,'TIMER_EXPIRED');
   }
 },500);
