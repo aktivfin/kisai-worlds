@@ -3,7 +3,7 @@ const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const S={
   name:localStorage.getItem('kisai.name')||'',
-  profile:null,room:null,events:[],selectedEvent:null,crafting:null,inventoryFilter:'all',marketQuery:'',health:null,rotationTimer:null,
+  profile:null,room:null,events:[],selectedEvent:null,crafting:null,inventoryFilter:'all',marketQuery:'',health:null,rotationTimer:null,voiceCatalog:null,voicePlaybackToken:0,turnTimer:null,
   volume:Number(localStorage.getItem('kisai.musicVolume')||32)/100,
   audio:null,music:null
 };
@@ -39,6 +39,41 @@ function setVoiceState(label,state='idle'){
   const box=$('#voiceStatus');if(!box)return;box.dataset.state=state;box.innerHTML='<span></span>'+esc(label);
 }
 function duckMusic(on){if(S.audio)S.audio.volume=on?Math.max(.02,S.volume*.28):S.volume}
+async function loadVoiceCatalog(){
+  try{S.voiceCatalog=await api('/api/voice-profiles')}catch{S.voiceCatalog={gm:[],player:[],npcArchetypes:[],unique:[]}}
+}
+function speakerLabel(event){
+  if(event.speakerType==='GM'||event.speakerType==='TIMER')return'GM';
+  if(event.speakerType==='SYSTEM')return'SYSTEM';
+  const npc=(S.room?.scene?.combatants||[]).find(x=>x.id===event.speakerId);if(npc)return npc.name;
+  const pc=(S.room?.players||[]).map(x=>x.character).find(x=>x?.id===event.speakerId);return pc?.name||pc?.archetype||'Персонаж';
+}
+function startTurnTimer(seconds){
+  clearInterval(S.turnTimer);let left=Math.max(0,Number(seconds)||0),el=document.getElementById('turnCountdown');
+  const draw=()=>{if(el)el.textContent=left+' сек';if(left<=0){clearInterval(S.turnTimer);return}left--};
+  draw();S.turnTimer=setInterval(draw,1000);
+}
+function renderVoiceEvents(events=[]){
+  const box=$('#voiceEventStack');if(!box)return;
+  const visible=events.filter(e=>e.speakerType!=='SYSTEM');
+  box.innerHTML=visible.map(e=>{
+    if(e.type==='timer')return '<div class="voiceLine timerLine"><span>GM · ТАЙМЕР</span><b>'+esc(e.text)+'</b><em id="turnCountdown">'+(e.seconds||0)+' сек</em></div>';
+    return '<div class="voiceLine '+String(e.speakerType||'').toLowerCase()+'"><span>'+esc(speakerLabel(e))+(e.emotion?' · '+esc(e.emotion):'')+'</span><b>'+esc(e.text)+'</b></div>';
+  }).join('');
+  const timer=visible.find(e=>e.type==='timer'&&e.seconds);if(timer)startTurnTimer(timer.seconds);
+}
+async function playVoiceQueue(queue=[]){
+  const token=++S.voicePlaybackToken,spoken=queue.filter(e=>e.speakerType!=='SYSTEM'&&e.audioBase64);
+  if(!spoken.length){duckMusic(false);return}
+  duckMusic(true);
+  for(const event of spoken){
+    if(token!==S.voicePlaybackToken)break;
+    setVoiceState((speakerLabel(event)||'Голос')+' говорит…','speaking');
+    await new Promise(resolve=>{try{const a=new Audio('data:'+(event.audioMime||'audio/mpeg')+';base64,'+event.audioBase64);a.onended=resolve;a.onerror=resolve;a.play().catch(resolve)}catch{resolve()}});
+  }
+  if(token===S.voicePlaybackToken){duckMusic(false);setVoiceState('Ожидание хода','idle')}
+}
+
 
 const MAP_POSITIONS=[
   [18,27],[43,18],[72,26],[31,48],[58,45],[82,54],[19,72],[47,76],[73,77]
@@ -249,6 +284,7 @@ function renderRoom(){
   $('#lobbyScenario').textContent=(S.room.event||S.room.scenario)?.title||'KisAI World';
   $('#playerCount').textContent=(S.room.players?.length||0)+' / 5';
   $('#players').innerHTML=(S.room.players||[]).map(p=>'<div class="playerCard '+(p.ready?'ready':'')+'"><div class="playerAvatar">'+esc((p.name||'?')[0].toUpperCase())+'</div><div><b>'+esc(p.name)+'</b><small>'+(p.character?esc(p.character.name||p.character.archetype)+' · LVL '+p.character.level:'Нужен живой персонаж')+'</small></div><span>'+(p.ready?'ГОТОВ':'…')+'</span></div>').join('');
+  const gmSel=$('#gmVoiceSelect');if(gmSel&&S.voiceCatalog){gmSel.innerHTML=(S.voiceCatalog.gm||[]).map(v=>'<option value="'+esc(v.id)+'">'+esc(v.label)+'</option>').join('');gmSel.value=S.room.voice?.gmVoiceId||S.voiceCatalog.gm?.[0]?.id||'';gmSel.disabled=S.room.hostId!==S.profile?.id||S.room.started}
   renderCharacterRoster();
   renderCharacterCard(S.profile?.character||myRoomPlayer()?.character||null);
   renderLoadout();
@@ -261,7 +297,8 @@ function renderCharacterCard(c){
   const pools=Object.values(c.combat?.resources||{});
   const resources=pools.map(r=>'<div class="resourceRow"><div><b>'+esc(r.label||r.id)+'</b><small>'+r.current+' / '+r.max+' зарядов</small></div><div class="resourceBar"><i style="width:'+Math.round((r.max?r.current/r.max:0)*100)+'%"></i></div></div>').join('');
   const abilities=(c.abilities||[]).map(x=>typeof x==='string'?'<span>✦ '+esc(x)+'</span>':'<span class="abilityMechanic"><b>✦ '+esc(x.name)+'</b><small>'+esc(x.damage||'—')+' · '+(x.range||0)+' м · '+(x.targets||1)+' цель · '+esc(x.damageType||'effect')+(x.resource?.cost?' · '+esc(x.resource.label||x.resource.pool)+' −'+x.resource.cost:'')+(x.cooldown?' · CD '+x.cooldown:'')+'</small></span>').join('');
-  const combat=c.combat||{},points=Number(c.developmentPoints)||0;
+  const combat=c.combat||{},points=Number(c.developmentPoints)||0,playerVoices=S.voiceCatalog?.player||[];
+  const voiceControl=playerVoices.length?'<div class="characterVoiceControl"><div><small>ГОЛОС ГЕРОЯ</small><b>Используется только когда игра озвучивает твою реплику</b></div><select id="characterVoiceSelect">'+playerVoices.map(v=>'<option value="'+esc(v.id)+'" '+(v.id===c.voiceProfileId?'selected':'')+'>'+esc(v.label)+'</option>').join('')+'</select><select id="characterVoiceMode"><option value="raw" '+(c.voiceMode==='raw'?'selected':'')+'>Raw</option><option value="character" '+(c.voiceMode==='character'?'selected':'')+'>Character Style</option><option value="manual" '+(c.voiceMode==='manual'?'selected':'')+'>Manual</option></select></div>':'';
   const abilityEvolution=points>0?'<div class="abilityEvolution"><div><small>РАЗВИТИЕ · '+points+' оч.</small><b>Предложи направление сам</b></div><select id="evolveAbilitySelect">'+(c.abilities||[]).map(x=>'<option value="'+esc(x.id||'')+'">Изменить: '+esc(x.name||x.fantasy||'Способность')+'</option>').join('')+'<option value="__new__">Создать новую способность</option></select><input id="evolveAbilityIdea" maxlength="180" placeholder="Например: хочу оставлять Разрез как ловушку"><button id="evolveAbilityBtn" class="softBtn">Сбалансировать развитие</button></div>':'';
   const resourceEvolution=points>0&&pools.length?'<div class="resourceUpgrade"><div><small>ЗАПАС ЗАРЯДОВ</small><b>Увеличить максимум ресурса</b></div><select id="resourceUpgradeSelect">'+pools.map(r=>'<option value="'+esc(r.id)+'">'+esc(r.label)+' · '+r.max+' → '+(r.max+2)+'</option>').join('')+'</select><button id="resourceUpgradeBtn" class="softBtn">+2 к максимуму · 1 очко</button></div>':'';
   $('#charCard').innerHTML='<div class="generatedCharacter"><div class="charTitle"><small>LEVEL '+c.level+' · XP '+(c.xp||0)+' · CORE '+esc(c.coreVersion||'legacy')+'</small><h3>'+esc(c.name||c.archetype)+'</h3></div><p>'+esc(c.concept)+'</p>'+
@@ -269,7 +306,9 @@ function renderCharacterCard(c){
     (resources?'<p class="railLabel">РЕСУРСЫ / ЗАРЯДЫ</p><div class="resourceGrid">'+resources+'</div>':'')+
     '<p class="railLabel">ХАРАКТЕРИСТИКИ</p><div class="skillGrid attributesGrid">'+attrs+'</div>'+
     (skills?'<p class="railLabel">ДИНАМИЧЕСКИЕ НАВЫКИ</p><div class="skillGrid">'+skills+'</div>':'')+
-    '<p class="railLabel">СПОСОБНОСТИ</p><div class="abilityList">'+abilities+'</div>'+abilityEvolution+resourceEvolution+'</div>';
+    '<p class="railLabel">СПОСОБНОСТИ</p><div class="abilityList">'+abilities+'</div>'+voiceControl+abilityEvolution+resourceEvolution+'</div>';
+  const saveCharacterVoice=async()=>{const voiceProfileId=document.getElementById('characterVoiceSelect')?.value,mode=document.getElementById('characterVoiceMode')?.value;if(!voiceProfileId)return;try{const d=await api('/api/profile/character-voice',{method:'POST',body:JSON.stringify({name:S.name,voiceProfileId,mode})});S.profile=d.profile;toast('Голос героя сохранён')}catch(e){toast(e.message)}};
+  const cv=document.getElementById('characterVoiceSelect'),cm=document.getElementById('characterVoiceMode');if(cv)cv.onchange=saveCharacterVoice;if(cm)cm.onchange=saveCharacterVoice;
   const btn=document.getElementById('evolveAbilityBtn');if(btn)btn.onclick=async()=>{const sel=document.getElementById('evolveAbilitySelect'),idea=document.getElementById('evolveAbilityIdea')?.value.trim();if(!idea)return toast('Опиши направление развития');try{btn.disabled=true;const isNew=sel.value==='__new__',d=await api('/api/profile/ability-evolve',{method:'POST',body:JSON.stringify({name:S.name,mode:isNew?'new':'modify',abilityId:isNew?null:sel.value,idea})});S.profile=d.profile;renderProfile();renderCharacterCard(d.character);toast('Способность сбалансирована: '+d.ability.name)}catch(e){toast(e.message==='no_development_points'?'Нет очков развития':e.message)}finally{btn.disabled=false}};
   const rb=document.getElementById('resourceUpgradeBtn');if(rb)rb.onclick=async()=>{const poolId=document.getElementById('resourceUpgradeSelect')?.value;if(!poolId)return;try{rb.disabled=true;const d=await api('/api/profile/resource-upgrade',{method:'POST',body:JSON.stringify({name:S.name,poolId})});S.profile=d.profile;renderProfile();renderCharacterCard(d.character);toast(d.resource.label+': максимум '+d.resource.max)}catch(e){toast(e.message==='no_development_points'?'Нет очков развития':e.message)}finally{rb.disabled=false}};
 }
@@ -379,8 +418,8 @@ function applyTurn(d){
   else if(d.skillGrowth?.type==='rank_up')toast('Навык вырос: '+d.skillGrowth.skill.name+' +'+d.skillGrowth.skill.rank);
   else if(d.transcript)toast('Распознано: '+d.transcript.slice(0,80));
   else if(d.drops?.length)toast('Найдено: '+d.drops.map(x=>x.name).join(', '));
-  if(d.speechBase64){try{setVoiceState('GM отвечает…','speaking');const a=new Audio('data:'+(d.speechMime||'audio/mpeg')+';base64,'+d.speechBase64);duckMusic(true);a.onended=()=>{duckMusic(false);setVoiceState('Ожидание хода','idle')};a.onerror=()=>{duckMusic(false);setVoiceState('Ожидание хода','idle')};a.play().catch(()=>{duckMusic(false);setVoiceState('Ожидание хода','idle')})}catch{duckMusic(false);setVoiceState('Ожидание хода','idle')}}
-  else{duckMusic(false);setVoiceState('Ожидание хода','idle')}
+  if(d.voiceEvents)renderVoiceEvents(d.voiceEvents);
+  if(d.voiceAudio?.length)playVoiceQueue(d.voiceAudio);else{duckMusic(false);setVoiceState('Ожидание хода','idle')}
 }
 
 async function music(name){
@@ -437,7 +476,7 @@ function setupMenuPreview(){
 async function init(){
   setupMediaFallbacks();setupMenuPreview();
   $('#playerName').value=S.name;$('#joinName').value=S.name;
-  if(S.name)await loadProfile();await loadEvents();startRotationClock();await pollHealth();setInterval(pollHealth,12000);music('menu');
+  await loadVoiceCatalog();if(S.name)await loadProfile();await loadEvents();startRotationClock();await pollHealth();setInterval(pollHealth,12000);music('menu');
 
   $('#brandBtn').onclick=()=>show('home');
   $('#hostBtn').onclick=()=>show('setup');
@@ -456,7 +495,7 @@ async function init(){
   $('#createRoom').onclick=async()=>{try{
     setName($('#playerName').value);await loadProfile();
     const characterId=$('#eventCharacterSelect').value||null;
-    const d=await api('/api/rooms',{method:'POST',body:JSON.stringify({name:S.name,eventId:S.selectedEvent,characterId})});
+    const d=await api('/api/rooms',{method:'POST',body:JSON.stringify({name:S.name,eventId:S.selectedEvent,characterId,gmVoiceId:$('#gmVoiceSelect')?.value||S.voiceCatalog?.gm?.[0]?.id})});
     S.room=d.room;S.profile=d.profile;renderProfile();renderRoom();await wait();show('lobby');music('lobby');
   }catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}};
   $('#joinRoom').onclick=async()=>{try{
@@ -479,6 +518,7 @@ async function init(){
   $('#textTurn').onkeydown=e=>{if(e.key==='Enter')$('#sendText').click()};
   $('#extractRun').onclick=async()=>{try{const d=await api('/api/rooms/'+S.room.code+'/extract',{method:'POST',body:JSON.stringify({name:S.name})});S.room=d.room;S.profile=d.profile;renderProfile();renderGame();const mine=d.rewards.find(x=>x.profileId===S.profile.id);toast(mine?'Эвакуация успешна · +'+mine.xp+' XP · '+mine.unique.length+' уник. предметов':'Приключение завершено')}catch(e){toast(e.message==='objectives_incomplete'?'Сначала заверши цели: '+(e.data?.progress||0)+'%':e.message)}};
   $('#copyLink').onclick=()=>navigator.clipboard?.writeText(location.origin+'?room='+(S.room?.code||'')).then(()=>toast('Ссылка скопирована'));
+  $('#gmVoiceSelect').onchange=async e=>{if(!S.room||S.room.hostId!==S.profile?.id)return;try{S.room=await api('/api/rooms/'+S.room.code+'/voice-config',{method:'POST',body:JSON.stringify({name:S.name,gmVoiceId:e.target.value})});renderRoom();toast('Голос GM изменён')}catch(x){toast(x.message)}};
 
   $('#settingsBtn').onclick=async()=>{modal('#settings');const c=await api('/api/config');$('#llmUrl').value=c.llm?.base_url||'';$('#llmModel').value=c.llm?.model||'';$('#sttModel').value=c.stt?.model||'';$('#ttsProvider').value=c.tts?.provider||'openai';$('#ttsModel').value=c.tts?.model||'';$('#ttsVoice').value=c.tts?.voice||'';$('#imgEnabled').checked=!!c.image?.enabled;$('#imgModel').value=c.image?.model||'';$('#musicVolume').value=Math.round(S.volume*100)};
   $('#saveSettings').onclick=async()=>{S.volume=Number($('#musicVolume').value)/100;localStorage.setItem('kisai.musicVolume',String(Math.round(S.volume*100)));if(S.audio)S.audio.volume=S.volume;await api('/api/config',{method:'POST',body:JSON.stringify({llm:{base_url:$('#llmUrl').value,model:$('#llmModel').value,api_key:$('#llmKey').value},stt:{model:$('#sttModel').value,api_key:$('#sttKey').value},tts:{provider:$('#ttsProvider').value,model:$('#ttsModel').value,voice:$('#ttsVoice').value,api_key:$('#ttsKey').value},image:{enabled:$('#imgEnabled').checked,model:$('#imgModel').value,api_key:$('#imgKey').value}})});modal('#settings',false);toast('Настройки сохранены')};
