@@ -357,3 +357,57 @@ A player attack:
 9. generates narration from the committed result.
 
 If the target survives, it may resolve a counterattack through the same deterministic resolver against the player's HP/evasion/carried armor. If player HP reaches zero, existing permadeath and expedition death-drop rules apply.
+
+
+## 16. Finite ability resources / charges
+
+Some abilities are limited by a finite character resource.
+
+A pool is stored under `character.combat.resources` and contains:
+- stable pool id;
+- display label;
+- current charges;
+- maximum charges;
+- base maximum;
+- upgrade level;
+- refill policy.
+
+An ability may contain:
+`resource: { pool, label, cost }`
+
+Examples:
+- a normal mundane attack may have no resource cost;
+- a supernatural single-target technique commonly costs 1;
+- a stronger / area technique may cost 2 or more.
+
+Multiple abilities may consume the same pool. This is intentional: a character can have several techniques competing for one finite reserve.
+
+### Spending
+
+Resource validation happens before the attack roll.
+
+If `current < cost`, the server returns `insufficient_resource` and does not roll d20.
+
+If enough charges exist, the cost is spent immediately. A miss still consumes the resource because the character executed the technique.
+
+The LLM cannot refund, create or ignore charges.
+
+### Recovery
+
+Current prototype refill policy is `expedition_start`: when a new expedition begins, configured ability pools refill to their maximum.
+
+Mid-run automatic infinite regeneration is not implemented.
+
+### Capacity growth
+
+Base capacity begins at 6 charges and receives a small level-based baseline increase every five levels.
+
+The player may also spend one development point outside an active expedition to upgrade one selected pool:
+`max += 2`
+
+This creates a build trade-off between:
+- making an ability mechanically stronger / broader;
+- learning another ability;
+- increasing the finite reserve that powers abilities.
+
+The same mechanism supports different fantasies such as mana, rage, cursed-energy-like reserves, stamina techniques or custom energy systems without changing server authority.
