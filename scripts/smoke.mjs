@@ -113,6 +113,7 @@ try{
   const potionInRun=started.players[0].runInventory.find(x=>x.catalogId==='healing_potion');
   const used=await post('/api/rooms/'+code+'/use-item',{name,itemId:potionInRun.id});
   if(used.room.players[0].runInventory.some(x=>x.catalogId==='healing_potion'))throw new Error('consumable was not consumed');
+  if(used.room.turnIndex!==risky.room.turnIndex+1)throw new Error('consumable must consume one turn');
 
   const early=await postRaw('/api/rooms/'+code+'/extract',{name});
   if(early.status!==409||early.data?.error!=='objectives_incomplete')throw new Error('early extraction must be blocked');
@@ -176,6 +177,7 @@ try{
   if(movedRoom.turnOrder[movedRoom.turnCursor]!==hostPaid.id)await post('/api/rooms/'+paidCode+'/turn',{name:paidAlly,action:'проверяю обстановку'});
   const enchanted=await post('/api/rooms/'+paidCode+'/enchant',{name,targetId:runGear.id,ingredientIds:[runIngredient.id]});
   if(enchanted.roll?.die!==20||!enchanted.success)throw new Error('deterministic adventure enchantment should succeed');
+  if(enchanted.room.turnIndex!==movedRoom.turnIndex+2)throw new Error('enchant must consume a turn after ally handoff');
   if(!(enchanted.item.enchantments||[]).length)throw new Error('enchantment was not persisted on unique item');
 
   let paidState=enchanted.room,paidSteps=0;

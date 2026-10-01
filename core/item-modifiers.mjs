@@ -1,4 +1,4 @@
-const EFFECTS=new Set(['damage_bonus','armor_bonus','accuracy_bonus','skill_bonus','attribute_bonus','resource_bonus','resistance']);
+const EFFECTS=new Set(['damage_bonus','armor_bonus','accuracy_bonus','skill_bonus','attribute_bonus']);
 export function itemModifier(item,type,context=null) {
   if(!item||Number(item.durability)===0)return 0;
   let total=0;

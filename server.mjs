@@ -30,7 +30,7 @@ const readJson = (file, fallback) => {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 };
 const writeJson = atomicWrite;
-const config = readJson(CONFIG_FILE, { port: 8787 });
+const config = loadState(CONFIG_FILE, { port: 8787 });
 const scenarios = readJson(SCENARIOS_FILE, []);
 const crafting = readJson(CRAFTING_FILE, {materials:{},recipes:[]});
 const persisted = loadState(STATE_FILE, { profiles: {}, market: [], transactions: [], sessions: {}, rooms: {} });
@@ -82,7 +82,7 @@ const TEST_DICE_QUEUE=String(process.env.KISAI_TEST_DICE||'').split(',').map(Num
 const nextD20=()=>TEST_DICE_QUEUE.length?TEST_DICE_QUEUE.shift():crypto.randomInt(1,21);
 
 
-function runtimeConfig(){ return readJson(CONFIG_FILE, {}); }
+function runtimeConfig(){ return loadState(CONFIG_FILE, {}); }
 function providerReady(section){ const c=runtimeConfig()[section]||{}; return Boolean(c.api_key && c.base_url && c.model); }
 function safeJsonText(text=''){
   const cleaned=String(text).trim().replace(/^\\\`\\\`\\\`(?:json)?/i,'').replace(/\\\`\\\`\\\`$/,'').trim();
@@ -520,6 +520,7 @@ function enchantRunItem(room,player,targetId,ingredientIds){
     const ench={id:id('ench'),at:now(),eventId:room.scenario.id,facility:facility.label,forgeTier:facility.tier,quality,effects};
     target.enchantments.push(ench);target.provenance.push({at:now(),type:'enchanted',eventId:room.scenario.id,facility:facility.label,quality,effects});
   }else target.provenance.push({at:now(),type:'enchant_failed',eventId:room.scenario.id,facility:facility.label});
+  tickCooldowns(player);room.log.unshift({at:now(),event:'ENCHANT_RESOLVED',profileId:player.id,actor:player.name,action:'enchant',itemId:target.id,success});advanceTurn(room);room.turnIndex=(room.turnIndex||0)+1;
   saveState();return{roll,item:target,success};
 }
 
@@ -698,6 +699,7 @@ function useRunItem(r,player,itemId){
   const effect=item.effect||{};consumeInventoryItem(player.runInventory,item.id,1);
   if(effect.type==='heal_wound'){player.wounds=Math.max(0,(player.wounds||0)-(Number(effect.value)||1));const c=materializeCharacterCore(player.character);c.combat.hp_current=Math.min(c.combat.hp_max,c.combat.hp_current+(Number(effect.value)||1)*4)}
   if(['roll_bonus','traversal','escape'].includes(effect.type))player.nextRollBonus=Math.max(Number(player.nextRollBonus)||0,Number(effect.value)||1);
+  tickCooldowns(player);r.log.unshift({at:now(),event:'ITEM_USED',profileId:player.id,actor:player.name,action:'use_item',itemId:item.id});advanceTurn(r);r.turnIndex=(r.turnIndex||0)+1;
   saveState();return{effect,wounds:player.wounds,hp:player.character?.combat?.hp_current??player.profile?.character?.combat?.hp_current??null,nextRollBonus:player.nextRollBonus||0};
 }
 function getRoom(c){ return rooms.get(String(c||'').toUpperCase()); }
@@ -724,6 +726,8 @@ function roomView(r,profileId){
 
 async function api(req,res,u){
   try{
+    const mutationRoom=u.pathname.match(/^\/api\/rooms\/([^/]+)\//);
+    if(req.method==='POST'&&mutationRoom&&busyRooms.has(mutationRoom[1].toUpperCase())&&!req.roomLockOwner)return json(res,409,{error:'action_in_progress'});
     const stream=u.pathname.match(/^\/api\/rooms\/([^/]+)\/events$/);
     if(req.method==='GET'&&stream){const r=getRoom(stream[1]);if(!r)return json(res,404,{error:'room_not_found'});const p=sessionProfile(req);if(!r.players.has(p.id))return json(res,403,{error:'player_not_in_room'});
       res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-store','connection':'keep-alive'});res.write(`data: ${JSON.stringify({type:'ROOM_UPDATED',room:roomView(r,p.id)})}\n\n`);
@@ -754,12 +758,12 @@ async function api(req,res,u){
 
     if(req.method==='GET'&&u.pathname==='/api/config'){
       if(!localAdmin(req))return json(res,403,{error:'local_admin_only'});
-      const c=readJson(CONFIG_FILE,{}),scrub=o=>Object.fromEntries(Object.entries(o||{}).map(([k,v])=>[k,/key/i.test(k)?(v?'••••••':''):v]));
+      const c=runtimeConfig(),scrub=o=>Object.fromEntries(Object.entries(o||{}).map(([k,v])=>[k,/key/i.test(k)?(v?'••••••':''):v]));
       return json(res,200,{...c,llm:scrub(c.llm),stt:scrub(c.stt),tts:scrub(c.tts),image:scrub(c.image)});
     }
     if(req.method==='POST'&&u.pathname==='/api/config'){
       if(!localAdmin(req))return json(res,403,{error:'local_admin_only'});
-      const incoming=await body(req),current=readJson(CONFIG_FILE,{});
+      const incoming=await body(req),current=runtimeConfig();
       for(const section of ['llm','stt','tts','image'])if(incoming[section]){
         const update={...incoming[section]};
         if(!update.api_key||String(update.api_key).includes('•'))delete update.api_key;
@@ -955,7 +959,7 @@ async function api(req,res,u){
     }
 
     return json(res,404,{error:'not_found'});
-  }catch(e){console.error(JSON.stringify({event:'api_error',path:u.pathname,code:e.message}));return json(res,e.status||(['invalid_provider_url','private_provider_url'].includes(e.message)?422:500),{error:e.status?e.message:'server_error',message:e.message})}
+  }catch(e){const safe=['invalid_provider_url','private_provider_url'].includes(e.message);console.error(JSON.stringify({event:'api_error',requestId:req.requestId,path:u.pathname,code:e.message}));return json(res,e.status||(safe?422:500),{error:e.status||safe?e.message:'server_error'})}
 }
 function staticFile(req,res,u){
   let rel;try{rel=decodeURIComponent(u.pathname==='/'?'/index.html':u.pathname)}catch{res.writeHead(400);return res.end('Bad path')}
@@ -982,7 +986,7 @@ const server=http.createServer((req,res)=>{
       if(busyRooms.has(r.code))return json(res,409,{error:'action_in_progress'});
       const actionId=String(req.headers['x-action-id']||'');
       if(actionId&&r.actionIds?.includes(actionId))return json(res,409,{error:'duplicate_action'});
-      req.actionId=actionId||null;busyRooms.add(r.code);
+      req.actionId=actionId||null;req.roomLockOwner=true;busyRooms.add(r.code);
       api(req,res,u).finally(()=>busyRooms.delete(r.code));return;
     }
     return api(req,res,u);
