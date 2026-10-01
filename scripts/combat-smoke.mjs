@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {resolveAttack,effectiveArmor,targetedEvasion,conditionLabel,weaponConditionModifiers} from '../core/combat.mjs';
 import {balanceAbilityFantasy,materializeCharacterCore,recordSkillUse,maxDynamicSkillRank,evolveAbilityDefinition,maxAbilitySlots,spendAbilityResource,refillCharacterResources,upgradeResourcePool} from '../core/character.mjs';
 import {spawn} from 'node:child_process';
+import {GM_VOICE_PROFILES,PLAYER_VOICE_PROFILES,NPC_VOICE_ARCHETYPES,assignNpcVoiceProfile,profileForSpeaker,makeVoiceEvent} from '../core/voice.mjs';
 
 {
   const armor={id:'cuirass',type:'armor',baseArmor:4,durability:100,material:['steel'],damage:[]};
@@ -76,6 +77,16 @@ import {spawn} from 'node:child_process';
   upgraded.current=1;refillCharacterResources(cursed);assert.equal(cursed.combat.resources[pool.id].current,8,'expedition refill must restore finite charges');
 }
 
+{
+  assert.ok(GM_VOICE_PROFILES.length>=4&&GM_VOICE_PROFILES.length<=6,'GM catalog must remain a small selectable set');
+  assert.ok(PLAYER_VOICE_PROFILES.length>=10&&PLAYER_VOICE_PROFILES.length<=15,'player voice catalog should expose roughly 10-15 bases');
+  assert.ok(NPC_VOICE_ARCHETYPES.length>=12,'NPCs need a reusable archetype library');
+  const npc={id:'bandit_02',name:'Бандит'};const id1=assignNpcVoiceProfile(npc,{seed:'bandit_02'}),id2=assignNpcVoiceProfile(npc,{seed:'bandit_02'});
+  assert.equal(id1,id2,'NPC voice identity must be stable');
+  assert.notEqual(profileForSpeaker({speakerType:'GM',room:{voice:{gmVoiceId:'gm_calm_male'}}}).kind,profileForSpeaker({speakerType:'NPC',speaker:npc}).kind,'GM and NPC routing must remain separate');
+  assert.equal(makeVoiceEvent({speakerType:'SYSTEM',type:'mechanics',mechanics:{damage:5}}).text,'','SYSTEM mechanics must not require spoken text');
+}
+
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const child=spawn(process.execPath,['server.mjs'],{stdio:['ignore','pipe','pipe'],env:{...process.env,KISAI_TEST_DICE:'20,20'}});
 let stderr='';child.stderr.on('data',d=>stderr+=d);
@@ -88,10 +99,12 @@ const post=(path,value)=>request(path,{method:'POST',body:JSON.stringify(value)}
 
 try{
   let health=null;for(let i=0;i<50&&!health;i++){try{health=await request('/api/health')}catch{await sleep(100)}}if(!health)throw new Error('server did not start: '+stderr);
+  const voices=await request('/api/voice-profiles');assert.ok(voices.gm.length>=4&&voices.player.length>=10&&voices.npcArchetypes.length>=12);
   const events=await request('/api/events'),event=events.find(x=>x.entry?.type==='free')||events[0];
   const name='Combat CI Hero';
   const created=await post('/api/rooms',{name,eventId:event.id});
   const code=created.room.code;
+  const voiceConfigured=await post('/api/rooms/'+code+'/voice-config',{name,gmVoiceId:'gm_female'});assert.equal(voiceConfigured.voice.gmVoiceId,'gm_female');
   const made=await post('/api/rooms/'+code+'/character',{name,wish:'пространственный мечник. Главная способность — Разрез пространства',appearance:'тёмный плащ'});
   assert.equal(made.character.coreVersion,'0.2');
   assert.ok(made.character.attributes&&made.character.combat);
@@ -113,5 +126,8 @@ try{
   assert.ok(attack.counterattack&&attack.counterattack.hit,'living enemy should resolve a deterministic counterattack');
   const playerAfter=attack.room.players[0];assert.ok(playerAfter.character.combat.hp_current<playerHpBefore,'counterattack must reduce authoritative player HP');
   assert.ok(attack.room.log?.[0]?.combat&&attack.room.log?.[0]?.counterattack,'room log must contain both sides of the combat exchange');
+  assert.ok(attack.voiceEvents?.some(x=>x.speakerType==='GM'),'combat response must include a GM narration event');
+  assert.ok(attack.voiceEvents?.some(x=>x.speakerType==='SYSTEM'),'mechanics must be a separate non-spoken SYSTEM event');
+  assert.ok(attack.voiceEvents?.some(x=>x.speakerType==='TIMER'),'turn timer must be routed separately through GM voice');
   console.log('Combat core PASS',{enemy:enemy.name,attack:attack.combat.attack,damage:attack.combat.damage,armor:attack.combat.armor?.before});
 }finally{child.kill('SIGTERM')}
