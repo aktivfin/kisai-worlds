@@ -34,7 +34,7 @@ const config = readJson(CONFIG_FILE, { port: 8787 });
 const scenarios = readJson(SCENARIOS_FILE, []);
 const crafting = readJson(CRAFTING_FILE, {materials:{},recipes:[]});
 const persisted = loadState(STATE_FILE, { profiles: {}, market: [], transactions: [], sessions: {}, rooms: {} });
-persisted.sessions ||= {}; persisted.rooms ||= {};
+persisted.sessions ||= {}; persisted.rooms ||= {};persisted.farmBuckets ||= {};
 
 const rooms = new Map();
 const MIME = {
@@ -371,17 +371,18 @@ function migrateProfile(p){
 function ensureProfile(name='Игрок') {
   const key=normalize(name)||'player';
   if(!persisted.profiles[key]){
-    persisted.profiles[key]={id:crypto.randomUUID(),name:String(name).trim()||'Игрок',balance:120,farmToday:0,farmDay:new Date().toISOString().slice(0,10),inventory:starterInventory(),equipped:{weapon:null,armor:null,charm:null,tool:null},recentActions:[],characterSlots:3,characters:[],activeCharacterId:null,eventTickets:2,subscription:{active:false,expiresAt:null}};
+    persisted.profiles[key]={id:crypto.randomUUID(),name:String(name).trim()||'Игрок',balance:0,farmToday:0,farmDay:new Date().toISOString().slice(0,10),inventory:starterInventory(),equipped:{weapon:null,armor:null,charm:null,tool:null},recentActions:[],characterSlots:3,characters:[],activeCharacterId:null,eventTickets:2,subscription:{active:false,expiresAt:null}};
     saveState();
   }
   const p=migrateProfile(persisted.profiles[key]),day=new Date().toISOString().slice(0,10);
   if(p.farmDay!==day){p.farmDay=day;p.farmToday=0;p.recentActions=[];saveState();}
   return p;
 }
-function createSession(name) {
+function createSession(name,remoteAddress) {
   // Display names never grant access to existing accounts.
   const p=ensureProfile(`guest_${crypto.randomUUID()}`);
   p.name=String(name||'Игрок').trim().slice(0,48)||'Игрок';
+  p.farmOrigin=crypto.createHash('sha256').update(String(remoteAddress||'unknown')).digest('hex');
   const token=crypto.randomBytes(32).toString('base64url');
   persisted.sessions[crypto.createHash('sha256').update(token).digest('hex')]=p.id;
   saveState();return {token,profile:publicProfile(p)};
@@ -612,7 +613,9 @@ function rollCheck(event,character,action,proposal,player){
 
 function farm(profile, action, music) {
   const n=normalize(action); if(n.length<8||profile.recentActions.includes(n))return 0;
-  const cap=60, base=['boss','discovery'].includes(music)?5:3, reward=Math.min(base,Math.max(0,cap-profile.farmToday));
+  const cap=60,base=['boss','discovery'].includes(music)?5:3,key=`${profile.farmDay}:${profile.farmOrigin||profile.id}`;
+  const reward=Math.min(base,Math.max(0,cap-profile.farmToday),Math.max(0,cap-(persisted.farmBuckets[key]||0)));
+  persisted.farmBuckets[key]=(persisted.farmBuckets[key]||0)+reward;
   profile.farmToday+=reward; profile.balance+=reward; profile.recentActions.unshift(n); profile.recentActions=profile.recentActions.slice(0,12);
   if(reward) persisted.transactions.unshift({id:id('tx'),at:now(),profileId:profile.id,type:'farm',amount:reward});
   saveState(); return reward;
@@ -727,7 +730,7 @@ async function api(req,res,u){
       const client={res,profileId:p.id};if(!subscribers.has(r.code))subscribers.set(r.code,new Set());subscribers.get(r.code).add(client);
       const heartbeat=setInterval(()=>res.write(': heartbeat\n\n'),15000);req.on('close',()=>{clearInterval(heartbeat);subscribers.get(r.code)?.delete(client)});return;
     }
-    if(req.method==='POST'&&u.pathname==='/api/session'){const input=await body(req);return json(res,201,createSession(input.name));}
+    if(req.method==='POST'&&u.pathname==='/api/session'){const input=await body(req);return json(res,201,createSession(input.name,req.socket.remoteAddress));}
     if(req.method==='GET'&&u.pathname==='/api/session'){const p=sessionProfile(req);return json(res,200,{profile:publicProfile(p),room:[...rooms.values()].filter(r=>r.players.has(p.id)&&!r.completed).map(r=>r.code)});}
     if(req.method==='GET'&&u.pathname==='/api/health')return json(res,200,{ok:true,version:'0.8.0-character-combat-core',llm:providerReady('llm'),stt:providerReady('stt'),tts:providerReady('tts')});
     if(req.method==='GET'&&u.pathname==='/api/voice-profiles')return json(res,200,publicVoiceCatalog());

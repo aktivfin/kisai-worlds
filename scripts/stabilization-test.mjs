@@ -51,6 +51,7 @@ try {
   const A=await client('Same Name'),B=await client('Same Name');assert.notEqual(A.id,B.id);
   assert.equal((await must('/api/profile',A.token)).id,A.id);
   assert.equal((await must('/api/profile?name=Same%20Name',B.token)).id,B.id);
+  assert.equal((await must('/api/profile',B.token)).balance,0,'fresh display names must not mint KAI');
   assert.equal((await call('/api/profile/character',null,{name:'Same Name',wish:'hero'})).status,401);
   const events=await must('/api/events');const free=events.find(x=>x.entry?.type==='free');
   const room=await must('/api/rooms',A.token,{eventId:free.id}),code=room.room.code;
@@ -109,6 +110,7 @@ try {
   const C=await client('Market seller'),D=await client('Buyer one'),E=await client('Buyer two');
   await stop();
   const fixture=loadState(state,{}),seller=Object.values(fixture.profiles).find(x=>x.id===C.id);
+  for(const buyerId of [D.id,E.id])Object.values(fixture.profiles).find(x=>x.id===buyerId).balance=1;
   seller.inventory.push({id:'equipment_fixture',serial:'KW-TEST-IMMUTABLE',kind:'equipment',slot:'weapon',rarity:'epic',name:'Fixture Blade',baseDamage:'1d4',durability:100,status:'owned',ownerId:C.id,provenance:[{type:'test_fixture'}]});
   atomicWrite(state,fixture);await launch();
   const listing=await must('/api/market/list',C.token,{itemId:'equipment_fixture',price:1});
@@ -117,7 +119,7 @@ try {
   const winner=buys[0].status===200?D:E,loser=winner===D?E:D;
   assert.equal((await must('/api/profile',winner.token)).inventory.filter(x=>x.id==='equipment_fixture').length,1);
   assert.equal((await must('/api/profile',loser.token)).inventory.filter(x=>x.id==='equipment_fixture').length,0);
-  assert.equal((await must('/api/profile',C.token)).balance,121); // 1 KAI incurs 0 KAI fee.
+  assert.equal((await must('/api/profile',C.token)).balance,1); // 1 KAI incurs 0 KAI fee.
 
   const victim=await client('Victim'),rescue=await client('Rescuer');
   const deathRoom=await must('/api/rooms',victim.token,{eventId:free.id}),deathCode=deathRoom.room.code;

@@ -22,7 +22,7 @@ The repository has a music manifest but does **not** contain the MP3 pack or fiv
 
 - Browser E2E has not run in the current environment because Playwright Chromium could not be downloaded; the CI job must run successfully on GitHub.
 - CI/branch protection and a safe merge to `main` have not been observed or performed.
-- Session creation is not Sybil resistant. Display-name spoofing no longer grants account access, but a fresh token can create a fresh profile and starter balance. Economy distribution must gain host admission or durable account proof before public deployment.
+- Session creation is not Sybil resistant. Fresh profiles start with 0 KAI, and committed action rewards share a daily cap by hashed network address, but a user with multiple addresses can create multiple profiles. Host admission or durable account proof is required before public deployment.
 - State uses a JSON snapshot and synchronous writes. It is fit only for small LAN alpha sessions; database transactions, multi-process locking, quotas and backups off-host are pending.
 - Range, cooldown and stun/slow work for the current single hostile encounter. Full multiple-target AoE, complex visibility, NPC turns, all affix categories and timer type variants are pending.
 - Release media, full voice streaming and robust provider network egress pinning are pending.
