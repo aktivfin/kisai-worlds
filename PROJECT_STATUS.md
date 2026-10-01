@@ -45,6 +45,10 @@ Implemented:
 - repeated relevant actions accumulate practice and can create/rank-up skills under a level cap;
 - server-derived HP, evasion and initiative;
 - player-authored ability fantasy translated into server-owned mechanical definitions;
+- finite named charge/resource pools shared by abilities (Mana / cursed-energy-like / technique energy);
+- server-side charge spending before the attack roll, including charge loss on a miss;
+- expedition-start resource refill and explicit insufficient-resource rejection;
+- development-point resource-capacity upgrades (+2 max per upgrade);
 - level-up grants development points; players spend them to modify or create abilities through the budget engine;
 - the lobby exposes that development flow directly as a player-authored ability prompt;
 - deterministic hit formula: d20 + accuracy vs target evasion;
