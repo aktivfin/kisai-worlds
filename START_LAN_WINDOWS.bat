@@ -9,5 +9,6 @@ for /f %%p in ('node -e "try{console.log(require('./data/config.json').port||878
 echo Local: http://localhost:%KISAI_PORT%
 ipconfig | findstr /R /C:"IPv4"
 echo Share your IPv4 with port %KISAI_PORT%. Allow Node.js on Private networks if Firewall asks.
+set KISAI_BIND=0.0.0.0
 node server.mjs
 pause

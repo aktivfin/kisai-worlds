@@ -7,9 +7,15 @@
     "start": "node server.mjs",
     "check": "node --check server.mjs && node --check public/app.js && node --check core/combat.mjs && node --check core/character.mjs && node --check core/voice.mjs",
     "validate:assets": "node scripts/validate-assets.mjs",
-    "verify": "npm run check && npm run validate:ui && npm run test:combat && npm run test:smoke && npm run validate:assets",
+    "validate:release-media": "node scripts/validate-assets.mjs --release",
+    "verify": "npm run check && npm run validate:ui && npm run test:combat && npm run test:smoke && npm run test:stabilization && npm run validate:assets",
     "test:smoke": "node scripts/smoke.mjs",
     "validate:ui": "node scripts/validate-ui.mjs",
-    "test:combat": "node scripts/combat-smoke.mjs"
+    "test:combat": "node scripts/combat-smoke.mjs",
+    "test:stabilization": "node scripts/stabilization-test.mjs",
+    "test:e2e": "node scripts/browser-e2e.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
   }
 }

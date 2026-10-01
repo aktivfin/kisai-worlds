@@ -90,8 +90,10 @@ import {GM_VOICE_PROFILES,PLAYER_VOICE_PROFILES,NPC_VOICE_ARCHETYPES,assignNpcVo
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const child=spawn(process.execPath,['server.mjs'],{stdio:['ignore','pipe','pipe'],env:{...process.env,KISAI_TEST_DICE:'20,20'}});
 let stderr='';child.stderr.on('data',d=>stderr+=d);
+let sessionToken=null;
 const raw=async(path,options={})=>{
-  const r=await fetch('http://127.0.0.1:8787'+path,{headers:{'content-type':'application/json'},...options});let data=null;try{data=await r.json()}catch{}
+  if(path==='/api/rooms'&&!sessionToken){const session=await fetch('http://127.0.0.1:8787/api/session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Combat CI Hero'})});sessionToken=(await session.json()).token}
+  const r=await fetch('http://127.0.0.1:8787'+path,{...options,headers:{'content-type':'application/json',...(sessionToken?{authorization:'Bearer '+sessionToken}:{})}});let data=null;try{data=await r.json()}catch{}
   return{ok:r.ok,status:r.status,data};
 };
 const request=async(path,options={})=>{const r=await raw(path,options);if(!r.ok)throw new Error(path+' -> '+r.status+' '+JSON.stringify(r.data));return r.data};
@@ -110,7 +112,13 @@ try{
   assert.ok(made.character.attributes&&made.character.combat);
   assert.equal(typeof made.character.abilities[0],'object');
   const poweredAbility=made.character.abilities.find(x=>x.resource?.cost>0);assert.ok(poweredAbility,'spatial combat build must expose a finite resource cost');
-  const started=await post('/api/rooms/'+code+'/start',{});
+  let started=await post('/api/rooms/'+code+'/start',{});
+  const visited=new Set([started.players[0].position.anchorId]);
+  while(started.scene.geometry.anchors.some(a=>!visited.has(a.id))){
+    const next=started.scene.geometry.anchors.find(a=>!visited.has(a.id));
+    started=(await post('/api/rooms/'+code+'/turn',{name,action:'иду к '+next.id})).room;visited.add(next.id);
+  }
+  if(started.players[0].position.anchorId!==started.objectives[0].anchorId)started=(await post('/api/rooms/'+code+'/turn',{name,action:'иду к '+started.objectives[0].anchorId})).room;
   const enemy=started.scene.combatants?.[0];assert.ok(enemy&&enemy.combat?.hp_max>0,'canonical scene must expose a hostile combatant');
   const startedHero=started.players[0].character,startedPool=startedHero.combat.resources[poweredAbility.resource.pool];assert.equal(startedPool.current,startedPool.max,'expedition start must refill charges');
   const beforeCharge=startedPool.current;

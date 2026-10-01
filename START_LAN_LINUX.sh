@@ -6,4 +6,4 @@ command -v node >/dev/null 2>&1 || { echo "Node.js 20+ не найден."; exit
 PORT="$(node -e "try{console.log(require('./data/config.json').port||8787)}catch(e){console.log(8787)}")"
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo "Local: http://localhost:${PORT}"; [ -n "${IP:-}" ] && echo "Friends: http://${IP}:${PORT}"
-exec node server.mjs
+KISAI_BIND=0.0.0.0 exec node server.mjs

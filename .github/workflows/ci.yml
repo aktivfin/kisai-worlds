@@ -19,6 +19,7 @@ jobs:
       - run: npm run validate:ui
       - run: npm run test:combat
       - run: npm run test:smoke
+      - run: npm run test:stabilization
 
   assets:
     name: Required media
@@ -29,3 +30,16 @@ jobs:
         with:
           node-version: 20
       - run: npm run validate:assets
+
+  browser:
+    name: Multiplayer browser E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e

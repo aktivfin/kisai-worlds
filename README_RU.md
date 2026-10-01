@@ -260,7 +260,7 @@ Source/runtime smoke проходит полный extraction-loop, включа
 
 ## Текущие ограничения
 
-- комнаты пока in-memory;
+- комнаты и походное состояние сохраняются в локальный JSON snapshot;
 - профили/рынок используют локальный JSON;
 - billing provider ещё не подключён;
 - continuous party voice ещё не реализован;
@@ -268,3 +268,7 @@ Source/runtime smoke проходит полный extraction-loop, включа
 - реальные JPG/MP3 ассеты должны быть добавлены отдельно.
 
 См. `PROJECT_STATUS.md` и `ROADMAP.md`.
+
+## Текущий статус стабилизации
+
+См. [STABILIZATION_STATUS.md](STABILIZATION_STATUS.md) перед развёртыванием и слиянием в `main`. Для обычного запуска используется только loopback; LAN доступ включается отдельными `START_LAN_*` скриптами. Аккаунт теперь определяется токеном сессии, а не именем игрока. Медиаархив в исходном репозитории отсутствует; проверка полного пакета: `npm run validate:release-media`.

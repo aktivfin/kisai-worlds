@@ -6,4 +6,4 @@ command -v node >/dev/null 2>&1 || { echo "Node.js 20+ не найден."; exit
 PORT="$(node -e "try{console.log(require('./data/config.json').port||8787)}catch(e){console.log(8787)}")"
 echo "KisAI Worlds: http://localhost:${PORT}"
 command -v xdg-open >/dev/null 2>&1 && (sleep 1; xdg-open "http://localhost:${PORT}" >/dev/null 2>&1 || true) &
-exec node server.mjs
+KISAI_BIND=127.0.0.1 exec node server.mjs

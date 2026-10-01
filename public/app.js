@@ -3,6 +3,7 @@ const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const S={
   name:localStorage.getItem('kisai.name')||'',
+  token:localStorage.getItem('kisai.session')||'',streamRoom:null,streamAbort:null,
   profile:null,room:null,events:[],selectedEvent:null,crafting:null,inventoryFilter:'all',marketQuery:'',health:null,rotationTimer:null,voiceCatalog:null,voicePlaybackToken:0,turnTimer:null,
   volume:Number(localStorage.getItem('kisai.musicVolume')||32)/100,
   audio:null,music:null
@@ -12,7 +13,7 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const normalize=v=>String(v??'').trim().toLowerCase().replace(/\s+/g,' ');
 const api=async(path,opts={})=>{
   let r;
-  try{r=await fetch(path,{headers:{'content-type':'application/json',...(opts.headers||{})},...opts});setConnection(true)}
+  try{r=await fetch(path,{...opts,headers:{'content-type':'application/json',...(S.token?{authorization:'Bearer '+S.token}:{}),...(opts.method==='POST'&&/\/rooms\/[^/]+\/(turn|voice-turn|combat\/attack|use-item|enchant)$/.test(path)?{'x-action-id':crypto.randomUUID()}:{}),...(opts.headers||{})}});setConnection(true)}
   catch(cause){setConnection(false);const e=new Error('network_offline');e.cause=cause;throw e}
   let d={};try{d=await r.json()}catch{}
   if(!r.ok){const e=new Error(d.error||d.message||('HTTP '+r.status));e.data=d;e.status=r.status;throw e}
@@ -159,7 +160,9 @@ function renderEventAccess(){
 }
 async function loadProfile(){
   if(!S.name)return;
-  S.profile=await api('/api/profile?name='+encodeURIComponent(S.name));
+  if(!S.token){const session=await api('/api/session',{method:'POST',body:JSON.stringify({name:S.name})});S.token=session.token;localStorage.setItem('kisai.session',S.token)}
+  S.profile=await api('/api/profile');
+  S.name=S.profile.name;localStorage.setItem('kisai.name',S.name);
   renderProfile();
 }
 function aliveCharacters(){return (S.profile?.characters||[]).filter(c=>c.status==='alive')}
@@ -280,11 +283,13 @@ async function loadMarket(){
 }
 function renderRoom(){
   if(!S.room)return;
+  connectRoomStream();
   $('#lobbyCode').textContent=S.room.code||'';
   $('#lobbyScenario').textContent=(S.room.event||S.room.scenario)?.title||'KisAI World';
   $('#playerCount').textContent=(S.room.players?.length||0)+' / 5';
   $('#players').innerHTML=(S.room.players||[]).map(p=>'<div class="playerCard '+(p.ready?'ready':'')+'"><div class="playerAvatar">'+esc((p.name||'?')[0].toUpperCase())+'</div><div><b>'+esc(p.name)+'</b><small>'+(p.character?esc(p.character.name||p.character.archetype)+' · LVL '+p.character.level:'Нужен живой персонаж')+'</small></div><span>'+(p.ready?'ГОТОВ':'…')+'</span></div>').join('');
   const gmSel=$('#gmVoiceSelect');if(gmSel&&S.voiceCatalog){gmSel.innerHTML=(S.voiceCatalog.gm||[]).map(v=>'<option value="'+esc(v.id)+'">'+esc(v.label)+'</option>').join('');gmSel.value=S.room.voice?.gmVoiceId||S.voiceCatalog.gm?.[0]?.id||'';gmSel.disabled=S.room.hostId!==S.profile?.id||S.room.started}
+  $('#startGame').disabled=S.room.hostId!==S.profile?.id||S.room.started;
   renderCharacterRoster();
   renderCharacterCard(S.profile?.character||myRoomPlayer()?.character||null);
   renderLoadout();
@@ -344,13 +349,18 @@ async function saveLoadout(){
 
 function renderGame(result=null){
   if(!S.room)return;
+  connectRoomStream();
   const r=S.room,sc=r.scene||{},event=r.event||r.scenario;
   $('#sceneTitle').textContent=sc.title||event?.title||'Текущая сцена';
   $('#gmText').textContent=sc.narration||'';
   $('#gameScenarioLabel').textContent=(event?.title||'KISAI WORLD').toUpperCase()+' · T'+(event?.danger_tier||1);
   const sceneArt=$('#sceneArt');if(sceneArt){sceneArt.dataset.kind=eventClass(event);sceneArt.dataset.event=event?.id||'';sceneArt.title=(event?.title||'Сцена')+' · '+(sc.title||'текущая сцена')}
-  const progress=Math.round(r.progress||0);$('#runProgressText').textContent=progress+'%';$('#runProgressFill').style.width=progress+'%';$('#extractRun').disabled=progress<100||r.completed;$('#extractRun').textContent=r.completed?'Завершено':progress>=100?'Эвакуироваться':'Эвакуация '+progress+'%';
-  $('#party').innerHTML=(r.players||[]).map((p,i)=>'<div class="partyMember '+(!p.alive?'dead':'')+'"><b>'+esc(p.name)+'</b><small>'+(p.character?esc(p.character.name||p.character.archetype)+' · '+p.wounds+'/3 раны':'Без героя')+'</small><span>'+(i===r.turnIndex?'ХОД':'')+'</span></div>').join('');
+  const progress=Math.round(r.progress||0),objectivesDone=(r.objectives||[]).filter(x=>x.required).every(x=>x.state==='complete');$('#runProgressText').textContent=progress+'%';$('#runProgressFill').style.width=progress+'%';$('#extractRun').disabled=progress<100||!objectivesDone||r.completed;$('#extractRun').textContent=r.completed?'Завершено':progress>=100&&!objectivesDone?'Заверши цель':progress>=100?'Эвакуироваться':'Эвакуация '+progress+'%';
+  $('#party').innerHTML=(r.players||[]).map(p=>'<div class="partyMember '+(!p.alive?'dead':'')+'"><b>'+esc(p.name)+'</b><small>'+(p.character?esc(p.character.name||p.character.archetype)+' · '+p.wounds+'/3 раны':'Без героя')+'</small><span>'+(p.id===r.turnOrder?.[r.turnCursor]?'ХОД':'')+'</span></div>').join('');
+  const myTurn=r.turnOrder?.[r.turnCursor]===S.profile?.id;
+  $('#sendText').disabled=!myTurn||r.completed;$('#textTurn').disabled=!myTurn||r.completed;
+  if($('#ptt'))$('#ptt').disabled=!myTurn||r.completed;
+  if(r.timer?.deadlineAt){const left=Math.max(0,Math.ceil((r.timer.deadlineAt-Date.now())/1000));startTurnTimer(left)}
   const me=myRoomPlayer();
   if($('#myStats')){const c=me?.character||{},combat=c.combat||{},def=me?.defense||{},inj=(c.injuries||[]).length,pools=Object.values(combat.resources||{}),charge=pools.length?'<span class="miniResource">'+pools.map(r=>esc(r.label)+' '+r.current+'/'+r.max).join(' · ')+'</span>':'';$('#myStats').innerHTML=me?'<small>ТВОЙ ГЕРОЙ</small><b>'+esc(c.name||c.archetype||'—')+'</b><div class="heroCombatMini"><span>HP <b>'+(combat.hp_current??'—')+'/'+(combat.hp_max??'—')+'</b></span><span>EVA <b>'+(combat.evasion??'—')+'</b></span><span>ARM <b>'+(def.armor?.effective??0)+'</b></span></div>'+charge+'<span>Травмы '+inj+' · Рюкзак '+me.runUsage+'/'+me.capacity+'</span>':''}
   const ctx=$('#sceneContext');if(ctx)ctx.innerHTML='<small>ТЕКУЩАЯ ПОЗИЦИЯ</small><b>'+esc(me?.position?.anchorId||'canonical scene')+'</b><span>'+esc(event?.genre||'Экспедиция')+' · опасность T'+(event?.danger_tier||1)+'</span>';
@@ -362,6 +372,26 @@ function renderGame(result=null){
   if(result?.combat)animateCombat(result.combat,result.counterattack);
   music(sc.music_state||'explore');
   renderPOV();
+}
+async function connectRoomStream(){
+  if(!S.room||S.streamRoom===S.room.code)return;
+  S.streamAbort?.abort();const roomCode=S.room.code,controller=new AbortController();S.streamAbort=controller;S.streamRoom=roomCode;
+  while(!controller.signal.aborted){
+    try{
+      const response=await fetch('/api/rooms/'+roomCode+'/events',{headers:{authorization:'Bearer '+S.token},signal:controller.signal});
+      if(!response.ok)throw new Error('stream_'+response.status);
+      setConnection(true);const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
+      while(!controller.signal.aborted){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let cut;
+        while((cut=buffer.indexOf('\n\n'))>=0){const event=buffer.slice(0,cut);buffer=buffer.slice(cut+2);const line=event.split('\n').find(x=>x.startsWith('data: '));if(!line)continue;
+          const update=JSON.parse(line.slice(6));if(update.room&&(!S.room||update.room.revision>=S.room.revision)){
+            S.room=update.room;if(S.room.started){renderGame();if(document.querySelector('#lobby.screen.active'))show('game')}else renderRoom();
+          }
+          if(update.type==='VOICE_EVENT'&&update.actorId!==S.profile?.id){renderVoiceEvents(update.voiceEvents||[]);playVoiceQueue(update.voiceAudio||[])}
+        }
+      }
+    }catch(e){if(controller.signal.aborted)break;setConnection(false)}
+    await new Promise(resolve=>setTimeout(resolve,1500));
+  }
 }
 function animateCombat(c,counter=null){
   const box=$('#diceResult');if(!box)return;box.classList.remove('success','fail','rolling');box.classList.add(c.hit?'success':'fail');
@@ -408,7 +438,7 @@ function renderActionLog(){
 }
 async function renderPOV(){
   if(!S.room||!S.name)return;
-  try{const p=await api('/api/rooms/'+S.room.code+'/pov?name='+encodeURIComponent(S.name)),box=$('#log');if(!box)return;box.insertAdjacentHTML('afterbegin','<div class="povCard"><small>PERSONAL POV</small><b>'+esc(p.camera.anchorId||'scene')+'</b><span>'+p.visibleAnchors.map(a=>esc(a.label)).join(' · ')+'</span></div>')}catch{}
+  try{const p=await api('/api/rooms/'+S.room.code+'/pov'),box=$('#log');if(!box)return;box.querySelector('.povCard')?.remove();box.insertAdjacentHTML('afterbegin','<div class="povCard"><small>PERSONAL POV</small><b>'+esc(p.camera.anchorId||'scene')+'</b><span>'+p.visibleAnchors.map(a=>esc(a.label)).join(' · ')+'</span></div>')}catch{}
 }
 function applyTurn(d){
   S.room=d.room;S.profile=d.profile;renderProfile();renderGame(d);
@@ -526,5 +556,6 @@ async function init(){
 
   const q=new URLSearchParams(location.search).get('room');if(q){show('join');$('#roomCode').value=q.toUpperCase()}
   setupVoice();
+  if(S.token){try{const session=await api('/api/session');const active=session.room?.[0];if(active){S.profile=session.profile;S.room=await api('/api/rooms/'+active);renderProfile();if(S.room.started){renderGame();show('game')}else{renderRoom();show('lobby')}}}catch(e){if(e.status===401){S.token='';localStorage.removeItem('kisai.session')}}}
 }
 init().catch(e=>{console.error(e);toast('Ошибка запуска: '+e.message)});

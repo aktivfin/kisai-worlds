@@ -45,6 +45,8 @@ export function resourceBaseMax(level=1){
 export function ensureCharacterResources(character){
   character.combat=character.combat||deriveCombat(character.attributes||{},character.level||1);
   character.combat.resources=character.combat.resources&&typeof character.combat.resources==='object'?character.combat.resources:{};
+  const used=new Set((character.abilities||[]).map(a=>a?.resource?.pool).filter(Boolean));
+  for(const poolId of Object.keys(character.combat.resources))if(!used.has(poolId))delete character.combat.resources[poolId];
   for(const ability of character.abilities||[]){
     if(!ability?.resource?.pool)continue;
     const poolId=ability.resource.pool,meta=resourcePoolForFantasy(ability.fantasy||ability.name||poolId),existing=character.combat.resources[poolId];

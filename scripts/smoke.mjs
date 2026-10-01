@@ -6,10 +6,18 @@ const child=spawn(process.execPath,['server.mjs'],{
 });
 let stderr='';child.stderr.on('data',d=>stderr+=d);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const sessions=new Map(),hosts=new Map();
 
 async function raw(path,options={}){
-  const r=await fetch('http://127.0.0.1:8787'+path,{headers:{'content-type':'application/json'},...options});
+  let value={};try{value=JSON.parse(options.body||'{}')}catch{}
+  const named=value.name||new URL('http://local'+path).searchParams.get('name')||hosts.get(path.match(/^\/api\/rooms\/([^/]+)/)?.[1]);
+  if(named&&!sessions.has(named)){
+    const created=await fetch('http://127.0.0.1:8787/api/session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:named})});
+    sessions.set(named,(await created.json()).token);
+  }
+  const r=await fetch('http://127.0.0.1:8787'+path,{...options,headers:{'content-type':'application/json',...(named?{authorization:'Bearer '+sessions.get(named)}:{})}});
   let data=null;try{data=await r.json()}catch{}
+  if(path==='/api/rooms'&&r.ok)hosts.set(data.room.code,named);
   return{status:r.status,ok:r.ok,data};
 }
 async function request(path,options={}){
@@ -22,6 +30,25 @@ async function ready(){
 const post=(path,value)=>request(path,{method:'POST',body:JSON.stringify(value)});
 const postRaw=(path,value)=>raw(path,{method:'POST',body:JSON.stringify(value)});
 const getProfile=name=>request('/api/profile?name='+encodeURIComponent(name));
+async function navigate(code,actorName,actorId,room,targetId,otherName=null){
+  const initial=await fetch('http://127.0.0.1:8787/api/rooms/'+code,{headers:{authorization:'Bearer '+sessions.get(actorName)}});
+  room=await initial.json();
+  const visited=new Set([room.players.find(p=>p.id===actorId).position.anchorId]);
+  for(let i=0;i<16&&room.players.find(p=>p.id===actorId).position.anchorId!==targetId;i++){
+    if(room.turnOrder[room.turnCursor]!==actorId){
+      if(!otherName)throw new Error('navigator lost turn');
+      await post('/api/rooms/'+code+'/turn',{name:otherName,action:'осматриваю обстановку'});
+      const response=await fetch('http://127.0.0.1:8787/api/rooms/'+code,{headers:{authorization:'Bearer '+sessions.get(actorName)}});
+      room=await response.json();continue;
+    }
+    const visible=room.scene.geometry.anchors;
+    const next=visible.some(a=>a.id===targetId)?targetId:visible.filter(a=>!visited.has(a.id)).at(-1)?.id||targetId;
+    room=(await post('/api/rooms/'+code+'/turn',{name:actorName,action:'иду к '+next})).room;
+    visited.add(next);
+  }
+  if(room.players.find(p=>p.id===actorId).position.anchorId!==targetId)throw new Error('cannot navigate to '+targetId);
+  return room;
+}
 
 try{
   const health=await ready();
@@ -96,6 +123,7 @@ try{
     room=d.room;
   }
   if(room.progress<100)throw new Error('event could not reach completion');
+  room=await navigate(code,name,p.id,room,room.objectives[0].anchorId);
 
   const extracted=await post('/api/rooms/'+code+'/extract',{name});
   const mine=extracted.rewards.find(x=>x.characterId===firstChar.id);
@@ -140,21 +168,24 @@ try{
   const tradeDuring=await postRaw('/api/market/list',{name,itemId:forgeGear.id,price:123});
   if(tradeDuring.status!==409||tradeDuring.data?.error!=='cannot_trade_during_run')throw new Error('trading must be blocked during active expedition');
 
-  const moved=await post('/api/rooms/'+paidCode+'/turn',{name,action:'иду к '+forgeEvent.enchantment.label});
-  const hostRoomPlayer=moved.room.players.find(x=>x.id===hostPaid.id);
+  const movedRoom=await navigate(paidCode,name,hostPaid.id,paidStarted,forgeEvent.enchantment.anchor_id,paidAlly);
+  const hostRoomPlayer=movedRoom.players.find(x=>x.id===hostPaid.id);
   if(hostRoomPlayer.position?.anchorId!==forgeEvent.enchantment.anchor_id)throw new Error('player did not reach enchantment facility');
   const runGear=hostRoomPlayer.runInventory.find(x=>x.kind==='equipment');
   const runIngredient=hostRoomPlayer.runInventory.find(x=>x.kind==='enchant_ingredient');
+  if(movedRoom.turnOrder[movedRoom.turnCursor]!==hostPaid.id)await post('/api/rooms/'+paidCode+'/turn',{name:paidAlly,action:'проверяю обстановку'});
   const enchanted=await post('/api/rooms/'+paidCode+'/enchant',{name,targetId:runGear.id,ingredientIds:[runIngredient.id]});
   if(enchanted.roll?.die!==20||!enchanted.success)throw new Error('deterministic adventure enchantment should succeed');
   if(!(enchanted.item.enchantments||[]).length)throw new Error('enchantment was not persisted on unique item');
 
   let paidState=enchanted.room,paidSteps=0;
   while(paidState.progress<100&&paidSteps++<25){
-    const d=await post('/api/rooms/'+paidCode+'/turn',{name,action:'осторожно выполняю безопасную часть задания, этап '+paidSteps});
+    const actor=paidState.turnOrder[paidState.turnCursor]===hostPaid.id?name:paidAlly;
+    const d=await post('/api/rooms/'+paidCode+'/turn',{name:actor,action:'осторожно выполняю безопасную часть задания, этап '+paidSteps});
     paidState=d.room;
   }
   if(paidState.progress<100)throw new Error('paid event could not complete');
+  paidState=await navigate(paidCode,name,hostPaid.id,paidState,paidState.objectives[0].anchorId,paidAlly);
   const paidExtract=await post('/api/rooms/'+paidCode+'/extract',{name});
   p=paidExtract.profile;
   const enchantedInStash=p.inventory.find(x=>x.id===unique.id);
@@ -168,11 +199,13 @@ try{
   await post('/api/rooms/'+deathCode+'/join',{name:rescue});
   const rescueChar=await post('/api/rooms/'+deathCode+'/character',{name:rescue,wish:'полевой медик и разведчик',appearance:'лёгкая броня'});
   if(!rescueChar.character?.id)throw new Error('rescue character not created');
-  await post('/api/rooms/'+deathCode+'/start',{});
+  let deathState=await post('/api/rooms/'+deathCode+'/start',{});
 
   let death=null;
-  for(let i=0;i<4;i++){
+  for(let i=0;i<8;i++){
+    if(deathState.turnOrder[deathState.turnCursor]!==p.id){deathState=(await post('/api/rooms/'+deathCode+'/turn',{name:rescue,action:'осматриваю вход '+i})).room;}
     const d=await post('/api/rooms/'+deathCode+'/turn',{name,action:'прыгаю в бездну и сознательно иду на смертельный риск '+i});
+    deathState=d.room;
     if(d.deathDrop?.length){death=d;break}
   }
   if(!death)throw new Error('deterministic permadeath did not trigger');
@@ -186,11 +219,12 @@ try{
   const rescuePlayer=claimed.room.players.find(x=>x.id===claimed.profile.id);
   if(!rescuePlayer?.runInventory.some(x=>x.id===enchantedInStash.id))throw new Error('party member did not recover death-drop item');
 
-  let deathState=claimed.room,steps=0;
+  deathState=claimed.room;let steps=0;
   while(deathState.progress<100&&steps++<25){
     const d=await post('/api/rooms/'+deathCode+'/turn',{name:rescue,action:'осторожно продвигаюсь по безопасному пути, этап '+steps});
     deathState=d.room;
   }
+  deathState=await navigate(deathCode,rescue,claimed.profile.id,deathState,deathState.objectives[0].anchorId);
   const rescueExtract=await post('/api/rooms/'+deathCode+'/extract',{name:rescue});
   if(!rescueExtract.profile.inventory.some(x=>x.id===enchantedInStash.id))throw new Error('recovered item was not extracted into rescuer stash');
 

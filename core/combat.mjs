@@ -1,4 +1,5 @@
 export const ATTRIBUTE_KEYS=['strength','agility','endurance','perception','intelligence','charisma'];
+import { itemModifier } from './item-modifiers.mjs';
 
 export const ATTRIBUTE_LABELS={
   strength:'Сила',agility:'Ловкость',endurance:'Выносливость',
@@ -65,7 +66,7 @@ export function defectArmorPenalty(item,area='torso'){
 export function effectiveArmor(item,area='torso'){
   if(!item)return 0;
   const base=Math.max(0,int(item.baseArmor??item.armor??0)),scaled=Math.floor(base*armorMultiplier(item.durability??100));
-  return Math.max(0,scaled-defectArmorPenalty(item,area));
+  return Math.max(0,scaled-defectArmorPenalty(item,area)+itemModifier(item,'armor_bonus'));
 }
 
 function materialFactor(materials=[],damageType='physical'){
@@ -150,14 +151,14 @@ export function resolveAttack({
   if(!attacker||!defender)throw new Error('combatants_required');
   const attrs=normalizeAttributes(attacker.attributes||{}),attackAttribute=ability.attackAttribute||ability.attribute||'agility';
   const skill=ability.skill||null,damageType=String(ability.damageType||'physical').toLowerCase(),weaponApplies=Boolean(weapon)&&!/spatial|space|magic|psychic|fire|acid|простран|маг|псих|огн|кисл/.test(damageType),weaponMods=weaponConditionModifiers(weaponApplies?weapon:null);
-  const accuracy=int(ability.accuracy||0)+(attrs[attackAttribute]||0)+skillRank(attacker,skill)+weaponMods.accuracy;
+  const accuracy=int(ability.accuracy||0)+(attrs[attackAttribute]||0)+skillRank(attacker,skill)+weaponMods.accuracy+itemModifier(weapon,'accuracy_bonus');
   const evasion=targetedEvasion(defender.combat?.evasion??10,targetArea,aimed),die=clamp(int(attackDie),1,20);
   const total=die+accuracy,critical=die===20,criticalFail=die===1,hit=critical||(!criticalFail&&total>=evasion);
   const base={type:'attack',hit,critical,criticalFail,attack:{die,accuracy,total,evasion,attribute:attackAttribute,skill},targetArea,aimed,abilityId:ability.id||null,abilityName:ability.name||'Атака'};
   if(!hit)return{...base,damage:null,armor:null,injury:null,defenderHp:defender.combat?.hp_current??null};
 
   const damageExpr=weaponApplies&&weapon?.baseDamage?weapon.baseDamage:(ability.damage||'1d4');
-  const damageRoll=rollDice(damageExpr,damageRng),rawDamage=Math.max(0,damageRoll.total+int(ability.damageBonus||0)+weaponMods.damageBonus+(critical?int(ability.criticalBonus||0):0));
+  const damageRoll=rollDice(damageExpr,damageRng),rawDamage=Math.max(0,damageRoll.total+int(ability.damageBonus||0)+weaponMods.damageBonus+itemModifier(weapon,'damage_bonus')+(critical?int(ability.criticalBonus||0):0));
   const armorItem=armorForArea(defender,targetArea),armorBefore=effectiveArmor(armorItem,targetArea);
   const minDamage=clamp(int(ability.minDamage||0),0,rawDamage),hpDamage=Math.max(minDamage,rawDamage-armorBefore);
   defender.combat=defender.combat||deriveCombat(defender.attributes||{},defender.level||1);
