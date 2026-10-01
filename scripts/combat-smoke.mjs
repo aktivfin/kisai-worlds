@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {resolveAttack,effectiveArmor,targetedEvasion,conditionLabel,weaponConditionModifiers} from '../core/combat.mjs';
-import {balanceAbilityFantasy,materializeCharacterCore,recordSkillUse,maxDynamicSkillRank,evolveAbilityDefinition,maxAbilitySlots} from '../core/character.mjs';
+import {balanceAbilityFantasy,materializeCharacterCore,recordSkillUse,maxDynamicSkillRank,evolveAbilityDefinition,maxAbilitySlots,spendAbilityResource,refillCharacterResources,upgradeResourcePool} from '../core/character.mjs';
 import {spawn} from 'node:child_process';
 
 {
@@ -66,6 +66,14 @@ import {spawn} from 'node:child_process';
   assert.equal(evolved.damage,'1d10');
   assert.ok(evolved.cooldown>=1,'higher direct damage needs an economy constraint');
   assert.equal(maxAbilitySlots(4),2);
+  const cursed=materializeCharacterCore({level:1,concept:'мечник с проклятой энергией',abilities:['Проклятый пространственный Разрез']});
+  const slash=cursed.abilities[0],pool=cursed.combat.resources[slash.resource.pool];
+  assert.ok(slash.resource?.cost===1,'supernatural slash must consume a finite charge resource');
+  assert.equal(pool.max,6);
+  const spent=spendAbilityResource(cursed,slash);assert.equal(spent.current,5);
+  pool.current=0;assert.throws(()=>spendAbilityResource(cursed,slash),/insufficient_resource/);
+  const upgraded=upgradeResourcePool(cursed,pool.id);assert.equal(upgraded.max,8,'resource capacity upgrade must add two charges');
+  upgraded.current=1;refillCharacterResources(cursed);assert.equal(cursed.combat.resources[pool.id].current,8,'expedition refill must restore finite charges');
 }
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -85,17 +93,22 @@ try{
   const created=await post('/api/rooms',{name,eventId:event.id});
   const code=created.room.code;
   const made=await post('/api/rooms/'+code+'/character',{name,wish:'пространственный мечник. Главная способность — Разрез пространства',appearance:'тёмный плащ'});
-  assert.equal(made.character.coreVersion,'0.1');
+  assert.equal(made.character.coreVersion,'0.2');
   assert.ok(made.character.attributes&&made.character.combat);
   assert.equal(typeof made.character.abilities[0],'object');
+  const poweredAbility=made.character.abilities.find(x=>x.resource?.cost>0);assert.ok(poweredAbility,'spatial combat build must expose a finite resource cost');
   const started=await post('/api/rooms/'+code+'/start',{});
   const enemy=started.scene.combatants?.[0];assert.ok(enemy&&enemy.combat?.hp_max>0,'canonical scene must expose a hostile combatant');
+  const startedHero=started.players[0].character,startedPool=startedHero.combat.resources[poweredAbility.resource.pool];assert.equal(startedPool.current,startedPool.max,'expedition start must refill charges');
+  const beforeCharge=startedPool.current;
   const beforeDurability=enemy.equipment.chest.durability;
   const playerHpBefore=started.players[0].character.combat.hp_current;
   const attack=await post('/api/rooms/'+code+'/combat/attack',{name,action:'Режу противника Разрезом в повреждённое место брони',targetId:enemy.id,targetArea:'breach',aimed:true});
   assert.equal(attack.combat.hit,true);
   assert.equal(attack.combat.attack.die,20);
   assert.ok(attack.combat.attack.evasion>enemy.combat.evasion,'aimed attack must raise hit threshold');
+  assert.equal(attack.resourceSpend.spent,poweredAbility.resource.cost);
+  assert.equal(attack.room.players[0].character.combat.resources[poweredAbility.resource.pool].current,beforeCharge-poweredAbility.resource.cost,'runtime attack must persist finite charge consumption');
   assert.ok(attack.room.scene.combatants[0].equipment.chest.durability<beforeDurability,'runtime attack must persist armor wear');
   assert.ok(attack.counterattack&&attack.counterattack.hit,'living enemy should resolve a deterministic counterattack');
   const playerAfter=attack.room.players[0];assert.ok(playerAfter.character.combat.hp_current<playerHpBefore,'counterattack must reduce authoritative player HP');
