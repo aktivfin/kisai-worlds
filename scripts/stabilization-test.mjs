@@ -69,7 +69,7 @@ try {
   assert.equal((await call('/api/profile/equip',A.token,{itemId:item.id})).data.error,'cannot_equip_during_run');
   const active=started.turnOrder[started.turnCursor],actor=active===A.id?A:B,other=active===A.id?B:A;
   assert.equal(started.scene.combatants.length,0,'distant NPC must not leak into private view');
-  assert.equal((await call('/api/rooms/'+code+'/combat/attack',actor.token,{action:'атакую'})).data.error,'target_out_of_range');
+  assert.match((await call('/api/rooms/'+code+'/combat/attack',actor.token,{action:'атакую'})).data.error,/no_hostile_target|target_out_of_range/);
   const expeditionCharacter=started.players.find(x=>x.id===A.id).characterId;
   await must('/api/profile/select-character',A.token,{characterId:alternate.character.id});
   assert.equal((await must('/api/rooms/'+code,A.token)).players.find(x=>x.id===A.id).characterId,expeditionCharacter);
@@ -181,5 +181,16 @@ try {
   assert.equal(slowed.combat.hit,true);
   assert.equal((await call('/api/rooms/'+controlCode+'/combat/attack',C.token,{action:ability.name,abilityId:ability.id})).data.error,'ability_on_cooldown');
   await must('/api/rooms/'+controlCode+'/turn',C.token,{action:'осматриваюсь'});
+  const hidden=await must('/api/rooms',D.token,{eventId:free.id}),hiddenCode=hidden.room.code;
+  await must('/api/rooms/'+hiddenCode+'/character',D.token,{wish:'слушатель'});
+  await stop();const hiddenFixture=loadState(state,{});
+  hiddenFixture.rooms[hiddenCode].scene.combatants[0].hidden=true;
+  atomicWrite(state,hiddenFixture);await launch();
+  await must('/api/rooms/'+hiddenCode+'/start',D.token,{});
+  const secretTurn=await must('/api/rooms/'+hiddenCode+'/turn',D.token,{action:'спрашиваю кто ты'});
+  assert.equal(secretTurn.room.scene.combatants.length,0);
+  assert.equal(secretTurn.voiceEvents.some(e=>e.speakerType==='NPC'),false,'hidden NPC must not appear in direct voice response');
+  assert.equal(secretTurn.npc_dialogue?.length||0,0,'hidden NPC dialogue must not appear in HTTP response');
+  assert.equal(secretTurn.room.log.some(e=>e.npcId),false,'hidden NPC actions must not appear in room log');
   console.log('Stabilization PASS: identity, host, SSE, turn mutex/timer, range/cooldown/stun, private POV, character lock, restart inventory/death drop, objectives, double buy, config secret, SSRF, modifiers, resource cleanup, atomic recovery');
 } finally {await stop();fs.rmSync(dir,{recursive:true,force:true})}

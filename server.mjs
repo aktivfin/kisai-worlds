@@ -60,13 +60,16 @@ const json = (res,status,body) => {
   const req=res.req, match=req?.url?.match(/^\/api\/rooms\/([^/?]+)/);
   res.errorCode=body?.error||null;
   const room=match&&getRoom(match[1]);
+  const allVoiceEvents=body?.voiceEvents,allVoiceAudio=body?.voiceAudio;
+  if(room&&allVoiceEvents){const viewer=req.actorId||sessionProfile(req).id;body.voiceEvents=filterVoiceEvents(room,viewer,allVoiceEvents,req.actorId);body.voiceAudio=(allVoiceAudio||[]).filter(x=>body.voiceEvents.some(e=>e.speakerId===x.speakerId&&e.type===x.type));}
+  if(room&&body?.npc_dialogue){const visible=new Set(perceive(room,req.actorId||sessionProfile(req).id).visibleNpc.map(x=>x.id));body.npc_dialogue=body.npc_dialogue.filter(x=>visible.has(x.speaker_id));}
   if(status>=200&&status<300&&req?.method==='POST'){
     if(room){room.revision=(room.revision||0)+1;if(body?.room)body.room.revision=room.revision;else if(body?.code===room.code)body.revision=room.revision;}
     if(room&&req.actionId){room.actionReceipts ||= {};room.actionReceipts[req.actionId]={status:'committed',profileId:req.actorId,revision:room.revision,at:now()};}
     saveState();
   }
   const data=JSON.stringify(body); res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-request-id':req?.requestId||''}); res.end(data);
-  if(room&&status>=200&&status<300&&req?.method==='POST'){publishRoom(room);if(body?.voiceEvents)for(const client of subscribers.get(room.code)||[])try{const allowed=filterVoiceEvents(room,client.profileId,body.voiceEvents,req.actorId);client.res.write(`data: ${JSON.stringify({type:'VOICE_EVENT',revision:room.revision,actorId:req.actorId,voiceEvents:allowed,voiceAudio:(body.voiceAudio||[]).filter(x=>allowed.some(e=>e.speakerId===x.speakerId&&e.type===x.type))})}\n\n`)}catch{}}
+  if(room&&status>=200&&status<300&&req?.method==='POST'){publishRoom(room);if(allVoiceEvents)for(const client of subscribers.get(room.code)||[])try{const allowed=filterVoiceEvents(room,client.profileId,allVoiceEvents,req.actorId);client.res.write(`data: ${JSON.stringify({type:'VOICE_EVENT',revision:room.revision,actorId:req.actorId,voiceEvents:allowed,voiceAudio:(allVoiceAudio||[]).filter(x=>allowed.some(e=>e.speakerId===x.speakerId&&e.type===x.type))})}\n\n`)}catch{}}
 };
 const body = req => new Promise((resolve,reject)=>{ let raw=''; req.on('data',c=>{raw+=c;if(raw.length>15_000_000){reject(new Error('body too large'));req.destroy();}}); req.on('end',()=>{try{req.actionReceivedAt=Date.now();if(req.roomLockOwner){const code=req.url.match(/^\/api\/rooms\/([^/]+)/)?.[1];assertTurn(getRoom(code),req.actorId,req.actionReceivedAt)}resolve(raw?JSON.parse(raw):{});}catch(e){reject(e);}}); req.on('error',reject); });
 const saveState = () => {
@@ -259,7 +262,8 @@ function buildVoiceEvents(room,actor,action,committed,proposal={}){
 
 async function commitCombatTurn(r,p,action,{targetId=null,abilityId=null,targetArea=null,aimed=null}={}){
   const player=r.players.get(p.id);if(!player)throw new Error('player_not_in_room');const character=materializeCharacterCore(player.character);
-  const target=(r.scene.combatants||[]).find(x=>x.id===targetId&&x.status!=='dead')||(r.scene.combatants||[]).find(x=>x.status!=='dead');if(!target)throw new Error('no_hostile_target');
+  const visible=new Set(perceive(r,p.id).visibleNpc.map(x=>x.id));
+  const target=(r.scene.combatants||[]).find(x=>x.id===targetId&&x.status!=='dead'&&visible.has(x.id))||(targetId?null:(r.scene.combatants||[]).find(x=>x.status!=='dead'&&visible.has(x.id)));if(!target)throw new Error('no_hostile_target');
   const ability=(character.abilities||[]).find(x=>x.id===abilityId)||selectAttackAbility(character,action),area=targetArea||attackArea(action),isAimed=aimed??area!=='torso';
   if((player.cooldowns?.[ability.id]||0)>0)throw new Error('ability_on_cooldown');
   const pos=player.position||spawnPosition(r.scene),targetPos=target.position||r.scene.geometry.anchors.at(-1);
@@ -299,7 +303,7 @@ async function commitCombatTurn(r,p,action,{targetId=null,abilityId=null,targetA
   const spoken=await narrateCombatOutcome(r,p,action,target,combat);
   if(spoken!==combatNarrativeFallback(p,target,combat)){
     r.scene.narration=spoken+(counterattack?' '+counterNarrative(target,counterattack):'')+(deathDrop.length?' Персонаж больше не способен продолжать бой; его походное снаряжение остаётся в сцене.':'');
-    r.log[0].narration=r.scene.narration;saveState();
+    const actionLog=r.log.find(e=>e.profileId===p.id&&e.characterId===player.characterId&&e.action===action);if(actionLog)actionLog.narration=r.scene.narration;saveState();
   }
   return{narration:r.scene.narration,music_state:r.scene.music_state,intensity:r.scene.intensity,combat,counterattack,resourceSpend,skillGrowth,deathDrop,progress:r.progress};
 }
