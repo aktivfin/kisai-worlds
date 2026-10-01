@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveAttack, resolveCheck, conditionLabel, effectiveArmor } from './core/combat.mjs';
-import { materializeCharacterCore, createNpcCombatant, balanceAbilityFantasy, recordSkillUse, evolveAbilityDefinition } from './core/character.mjs';
+import { materializeCharacterCore, createNpcCombatant, balanceAbilityFantasy, recordSkillUse, evolveAbilityDefinition, spendAbilityResource, refillCharacterResources, upgradeResourcePool } from './core/character.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(__dirname, 'data');
@@ -171,6 +171,7 @@ async function commitCombatTurn(r,p,action,{targetId=null,abilityId=null,targetA
   const player=r.players.get(p.id);if(!player)throw new Error('player_not_in_room');const character=materializeCharacterCore(p.character||player.character);
   const target=(r.scene.combatants||[]).find(x=>x.id===targetId&&x.status!=='dead')||(r.scene.combatants||[]).find(x=>x.status!=='dead');if(!target)throw new Error('no_hostile_target');
   const ability=(character.abilities||[]).find(x=>x.id===abilityId)||selectAttackAbility(character,action),area=targetArea||attackArea(action),isAimed=aimed??area!=='torso';
+  const resourceSpend=spendAbilityResource(character,ability);
   const weapon=equippedRunWeapon(p,player),combat=resolveAttack({attacker:character,defender:target,ability,targetArea:area,aimed:isAimed,attackDie:nextD20(),damageRng:max=>crypto.randomInt(1,max+1),weapon});
   const skillGrowth=ability.skill?recordSkillUse(character,{name:ability.skill,attribute:ability.attackAttribute||'agility',success:combat.hit}):null;
   let narration=await narrateCombatOutcome(r,p,action,target,combat),counterattack=null,deathDrop=[];
@@ -187,7 +188,7 @@ async function commitCombatTurn(r,p,action,{targetId=null,abilityId=null,targetA
   r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,action,narration,combat,counterattack});
   const alive=[...r.players.values()].filter(x=>x.alive);if(alive.length)r.turnIndex=(r.turnIndex+1)%alive.length;
   if(!alive.length){r.completed=true;r.outcome='wipe';for(const item of r.scene.loot){item.status='lost'}r.scene.loot=[]}
-  saveState();return{narration,music_state:r.scene.music_state,intensity:r.scene.intensity,combat,counterattack,skillGrowth,deathDrop,progress:r.progress};
+  saveState();return{narration,music_state:r.scene.music_state,intensity:r.scene.intensity,combat,counterattack,resourceSpend,skillGrowth,deathDrop,progress:r.progress};
 }
 
 function commitTurn(r,p,action,result){
@@ -651,6 +652,12 @@ async function api(req,res,u){
       const b=await body(req),p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'cannot_craft_during_run'});
       try{return json(res,200,{item:craftForProfile(p,b.recipeId,b.quantity),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
     }
+    if(req.method==='POST'&&u.pathname==='/api/profile/resource-upgrade'){
+      const b=await body(req),p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'cannot_upgrade_resource_during_run'});
+      const c=syncActiveCharacter(p);if(!c)return json(res,404,{error:'active_character_not_found'});if((Number(c.developmentPoints)||0)<1)return json(res,409,{error:'no_development_points'});
+      try{const resource=upgradeResourcePool(c,String(b.poolId||''));c.developmentPoints--;saveState();return json(res,200,{resource,character:c,profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
+    }
+
     if(req.method==='POST'&&u.pathname==='/api/profile/ability-evolve'){
       const b=await body(req),p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'cannot_evolve_during_run'});
       const c=syncActiveCharacter(p);if(!c)return json(res,404,{error:'active_character_not_found'});if((Number(c.developmentPoints)||0)<1)return json(res,409,{error:'no_development_points'});
@@ -720,7 +727,7 @@ async function api(req,res,u){
       for(const pl of players){
         const p=ensureProfile(pl.name);consumeAccess(p,r.scenario);pl.runInventory=[];
         for(const q of pl.pendingLoadout||[]){const item=takeFromStash(p,q.itemId,q.quantity);item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'entered_event',eventId:r.scenario.id,characterId:pl.characterId});pl.runInventory.push(item)}
-        const c=p.characters.find(x=>x.id===pl.characterId);if(c)c.runs=(c.runs||0)+1;
+        const c=p.characters.find(x=>x.id===pl.characterId);if(c){c.runs=(c.runs||0)+1;refillCharacterResources(c);pl.character=c}
       }
       r.started=true;r.participantsAtStart=players.length;r.startedAt=now();r.scene.music_state='explore';saveState();return json(res,200,roomView(r));
     }
@@ -729,7 +736,7 @@ async function api(req,res,u){
     if(req.method==='POST'&&combatAttack){
       const r=getRoom(combatAttack[1]);if(!r)return json(res,404,{error:'room_not_found'});if(!r.started||r.completed)return json(res,409,{error:'run_not_active'});
       const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead'});
-      try{const committed=await commitCombatTurn(r,p,String(b.action||'атакую').slice(0,1200),b);return json(res,200,{...committed,room:roomView(r),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
+      try{const committed=await commitCombatTurn(r,p,String(b.action||'атакую').slice(0,1200),b);return json(res,200,{...committed,room:roomView(r),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message,pool:e.pool,current:e.current,required:e.required})}
     }
 
     const turn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/turn$/);
