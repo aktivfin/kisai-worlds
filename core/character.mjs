@@ -49,10 +49,12 @@ export function ensureCharacterResources(character){
     if(!ability?.resource?.pool)continue;
     const poolId=ability.resource.pool,meta=resourcePoolForFantasy(ability.fantasy||ability.name||poolId),existing=character.combat.resources[poolId];
     const baseMax=resourceBaseMax(character.level||1),upgradeLevel=Math.max(0,Number(existing?.upgradeLevel)||0),max=Math.max(Number(existing?.max)||0,baseMax+upgradeLevel*2);
-    character.combat.resources[poolId]={
+    const pool=existing||{};
+    Object.assign(pool,{
       id:poolId,label:existing?.label||ability.resource.label||meta.label,current:Math.min(Number.isFinite(Number(existing?.current))?Number(existing.current):max,max),
       max,baseMax,upgradeLevel,refill:'expedition_start'
-    };
+    });
+    character.combat.resources[poolId]=pool;
   }
   return character.combat.resources;
 }
@@ -74,6 +76,17 @@ export function spendAbilityResource(character,ability){
   if(!state.pool||state.pool.current<state.cost){const e=new Error('insufficient_resource');e.pool=state.pool?.id||ability.resource.pool;e.required=state.cost;e.current=state.pool?.current||0;throw e}
   state.pool.current-=state.cost;
   return{spent:state.cost,poolId:state.pool.id,label:state.pool.label,current:state.pool.current,max:state.pool.max};
+}
+
+export function refreshResourceCaps(character){
+  const resources=ensureCharacterResources(character),base=resourceBaseMax(character.level||1);
+  for(const pool of Object.values(resources)){
+    const oldMax=Number(pool.max)||base,newMax=base+(Number(pool.upgradeLevel)||0)*2;
+    pool.baseMax=base;pool.max=newMax;
+    if(oldMax<newMax&&pool.current>oldMax)pool.current=newMax;
+    pool.current=Math.min(pool.current,pool.max);
+  }
+  return resources;
 }
 
 export function upgradeResourcePool(character,poolId){
