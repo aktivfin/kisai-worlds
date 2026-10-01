@@ -727,9 +727,12 @@ function runDefenseView(player){
 function roomView(r,profileId){
   if(!r.players.has(profileId))throw new Error('player_not_in_room');
   const view=perceive(r,profileId);
-  const scene={...r.scene,narration:view.narration,geometry:{visibilityRadius:r.scene.geometry?.visibilityRadius,anchors:view.visibleAnchors},combatants:view.visibleNpc,loot:view.visibleLoot};
+  const scene={id:r.scene.id,title:r.scene.title,narration:view.narration,music_state:r.scene.music_state,intensity:r.scene.intensity,
+    geometry:{visibilityRadius:r.scene.geometry?.visibilityRadius,anchors:view.visibleAnchors},
+    combatants:view.visibleNpc.map(n=>({id:n.id,name:n.name,status:n.status,position:n.position,combat:n.combat,attributes:{agility:n.attributes?.agility},equipment:n.equipment,conditions:n.conditions||{}})),
+    loot:view.visibleLoot};
   return {code:r.code,scenario:r.scenario,event:r.scenario,hostId:r.hostId,voice:r.voice||{gmVoiceId:GM_VOICE_PROFILES[0].id},started:r.started,completed:Boolean(r.completed),outcome:r.outcome||null,
-    turnIndex:r.turnIndex,turnOrder:r.turnOrder||[],turnCursor:r.turnCursor||0,round:r.round||1,timer:r.timer||null,revision:r.revision||0,progress:r.progress||0,objectives:r.objectives||[],participantsAtStart:r.participantsAtStart||0,scene,log:view.knownLog,
+    turnIndex:r.turnIndex,turnOrder:r.turnOrder||[],turnCursor:r.turnCursor||0,round:r.round||1,timer:r.timer||null,revision:r.revision||0,progress:r.progress||0,objectives:(r.objectives||[]).filter(o=>o.visibility!=='hidden'||o.ownerId===profileId),participantsAtStart:r.participantsAtStart||0,scene,log:view.knownLog,
     players:[...r.players.values()].map(x=>({id:x.id,name:x.name,ready:x.ready,characterId:x.characterId,character:x.character||x.profile?.character||null,
       alive:x.alive!==false,position:x.id===profileId||Math.hypot((x.position?.x||0)-view.camera.x,(x.position?.y||0)-view.camera.y)<=(r.scene.geometry?.visibilityRadius||15)?x.position:null,wounds:x.wounds||0,defense:runDefenseView(x),capacity:x.capacity||6,runUsage:inventoryUsage(x.runInventory||[]),
       runInventory:x.id===profileId?x.runInventory||[]:[],pendingLoadout:x.id===profileId?x.pendingLoadout||[]:[]}))};
