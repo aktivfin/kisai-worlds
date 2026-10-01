@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveAttack, resolveCheck, conditionLabel, effectiveArmor } from './core/combat.mjs';
-import { materializeCharacterCore, createNpcCombatant, balanceAbilityFantasy, recordSkillUse, evolveAbilityDefinition, spendAbilityResource, refillCharacterResources, upgradeResourcePool } from './core/character.mjs';
+import { materializeCharacterCore, createNpcCombatant, balanceAbilityFantasy, recordSkillUse, evolveAbilityDefinition, spendAbilityResource, refillCharacterResources, upgradeResourcePool, refreshResourceCaps } from './core/character.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(__dirname, 'data');
@@ -271,7 +271,7 @@ function xpNeeded(level){return 100+Math.max(0,level-1)*80}
 function grantXp(character,amount){
   materializeCharacterCore(character);character.xp=(character.xp||0)+Math.max(0,Math.floor(amount));let levels=0;
   while(character.xp>=xpNeeded(character.level||1)&&(character.level||1)<50){character.xp-=xpNeeded(character.level||1);character.level=(character.level||1)+1;levels++}
-  if(levels)character.developmentPoints=(Number(character.developmentPoints)||0)+levels;
+  if(levels){character.developmentPoints=(Number(character.developmentPoints)||0)+levels;refreshResourceCaps(character)}
   return levels;
 }
 function runCapacity(character){return clamp(6+Math.floor((((character?.level)||1)-1)/5),6,10)}
@@ -744,7 +744,7 @@ async function api(req,res,u){
       const r=getRoom(turn[1]);if(!r)return json(res,404,{error:'room_not_found'});if(!r.started||r.completed)return json(res,409,{error:'run_not_active'});
       const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead'});
       const action=String(b.action||'осматриваюсь').slice(0,1200);
-      if(isAttackAction(action)){try{const committed=await commitCombatTurn(r,p,action,b);return json(res,200,{...committed,room:roomView(r),profile:publicProfile(p),ai:providerReady('llm')})}catch(e){if(e.message!=='no_hostile_target')throw e}}
+      if(isAttackAction(action)){try{const committed=await commitCombatTurn(r,p,action,b);return json(res,200,{...committed,room:roomView(r),profile:publicProfile(p),ai:providerReady('llm')})}catch(e){if(e.message==='insufficient_resource')return json(res,409,{error:e.message,pool:e.pool,current:e.current,required:e.required});if(e.message!=='no_hostile_target')throw e}}
       const proposal=await resolveGMAI(r,action,p),committed=commitTurn(r,p,action,proposal);
       return json(res,200,{...proposal,...committed,room:roomView(r),profile:publicProfile(p),ai:providerReady('llm')});
     }
@@ -753,7 +753,7 @@ async function api(req,res,u){
       const r=getRoom(voiceTurn[1]);if(!r)return json(res,404,{error:'room_not_found'});if(!r.started||r.completed)return json(res,409,{error:'run_not_active'});
       const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead'});
       const action=await transcribeAudio(b.audioBase64,b.mimeType||'audio/webm');if(!action)return json(res,422,{error:'empty_transcript'});
-      let proposal={},committed;if(isAttackAction(action)){try{committed=await commitCombatTurn(r,p,action,b)}catch(e){if(e.message!=='no_hostile_target')throw e}}
+      let proposal={},committed;if(isAttackAction(action)){try{committed=await commitCombatTurn(r,p,action,b)}catch(e){if(e.message==='insufficient_resource')return json(res,409,{error:e.message,pool:e.pool,current:e.current,required:e.required,transcript:action});if(e.message!=='no_hostile_target')throw e}}
       if(!committed){proposal=await resolveGMAI(r,action,p);committed=commitTurn(r,p,action,proposal)}let speechBase64=null;
       try{speechBase64=await synthesizeSpeech(committed.narration)}catch(e){console.warn('TTS fallback:',e.message)}
       return json(res,200,{transcript:action,...proposal,...committed,room:roomView(r),profile:publicProfile(p),speechBase64,speechMime:'audio/mpeg'});
