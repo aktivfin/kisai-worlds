@@ -150,7 +150,7 @@ function renderCharacterSelect(){
   sel.innerHTML='<option value="">Создать нового в лобби</option>'+aliveCharacters().map(c=>
     '<option value="'+c.id+'" '+(c.id===current?'selected':'')+'>'+esc(c.name||c.archetype)+' · LVL '+c.level+' · '+esc(c.archetype)+'</option>'
   ).join('');
-  sel.onchange=async()=>{if(!sel.value)return;try{S.profile=await api('/api/profile/select-character',{method:'POST',body:JSON.stringify({name:S.name,characterId:sel.value})});renderProfile()}catch(e){toast(e.message)}};
+  sel.onchange=async()=>{if(!sel.value)return;try{S.profile=await api('/api/profile/select-character',{method:'POST',body:JSON.stringify({name:S.name,characterId:sel.value})});renderProfile()}catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}};
 }
 function charStatus(c){return c.status==='dead'?'ПОГИБ':('LVL '+c.level+' · XP '+(c.xp||0))}
 function renderCharacterRoster(){
@@ -167,7 +167,7 @@ function renderCharacterRoster(){
     S.profile=await api('/api/profile/select-character',{method:'POST',body:JSON.stringify({name:S.name,characterId:b.dataset.id})});
     if(S.room){const d=await api('/api/rooms/'+S.room.code+'/select-character',{method:'POST',body:JSON.stringify({name:S.name,characterId:b.dataset.id})});S.room=d.room;S.profile=d.profile;renderRoom()}
     renderProfile();renderLoadout();
-  }catch(e){toast(e.message)}});
+  }catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}});
 }
 function stashLabel(i){return i.stackable?(esc(i.name)+' ×'+(i.quantity||1)):(esc(i.name)+' · '+(i.rarity||''))}
 function renderStash(){
@@ -211,11 +211,11 @@ function openItemInspector(i,{listing=null}={}){
     (owned&&i.kind==='equipment'?'<div class="sellRow"><input id="sellPrice" type="number" min="1" placeholder="Цена KAI"><button id="sellItem" class="goldBtn">Выставить</button></div>':'');
   $('#itemInspector').classList.remove('hidden');
   const equip=document.getElementById('equipItem');
-  if(equip)equip.onclick=async()=>{try{S.profile=await api(equipped?'/api/profile/unequip':'/api/profile/equip',{method:'POST',body:JSON.stringify(equipped?{name:S.name,slot:i.slot}:{name:S.name,itemId:i.id})});renderProfile();$('#itemInspector').classList.add('hidden');toast(equipped?'Предмет снят':'Предмет экипирован')}catch(e){toast(e.message)}};
+  if(equip)equip.onclick=async()=>{try{S.profile=await api(equipped?'/api/profile/unequip':'/api/profile/equip',{method:'POST',body:JSON.stringify(equipped?{name:S.name,slot:i.slot}:{name:S.name,itemId:i.id})});renderProfile();$('#itemInspector').classList.add('hidden');toast(equipped?'Предмет снят':'Предмет экипирован')}catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}};
   const gv=document.getElementById('genItemVisual');
-  if(gv)gv.onclick=async()=>{try{const d=await api('/api/items/'+i.id+'/visual',{method:'POST',body:JSON.stringify({name:S.name})});i.visual=d.visual;renderStash();openItemInspector(i);toast('Visual card создана')}catch(e){toast(e.message)}};
+  if(gv)gv.onclick=async()=>{try{const d=await api('/api/items/'+i.id+'/visual',{method:'POST',body:JSON.stringify({name:S.name})});i.visual=d.visual;renderStash();openItemInspector(i);toast('Visual card создана')}catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}};
   const sell=document.getElementById('sellItem');
-  if(sell)sell.onclick=async()=>{const price=Number(document.getElementById('sellPrice')?.value);if(!price)return toast('Укажи цену');try{await api('/api/market/list',{method:'POST',body:JSON.stringify({name:S.name,itemId:i.id,price})});await loadProfile();await loadMarket();$('#itemInspector').classList.add('hidden');toast('Лот выставлен')}catch(e){toast(e.message)}};
+  if(sell)sell.onclick=async()=>{const price=Number(document.getElementById('sellPrice')?.value);if(!price)return toast('Укажи цену');try{await api('/api/market/list',{method:'POST',body:JSON.stringify({name:S.name,itemId:i.id,price})});await loadProfile();await loadMarket();$('#itemInspector').classList.add('hidden');toast('Лот выставлен')}catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}};
 }
 function bindItemInspector(){
   $$('#inventoryGrid .itemCard').forEach(c=>c.onclick=()=>openItemInspector((S.profile?.inventory||[]).find(x=>x.id===c.dataset.item)));
@@ -231,7 +231,7 @@ async function loadCrafting(){
     const can=Object.entries(r.cost||{}).every(([id,n])=>owned(id)>=n),effect=r.output?.effect||{};
     return '<div class="craftCard"><small>РАСХОДНИК</small><h4>'+esc(r.name)+'</h4><p class="craftEffect">'+esc(effectLabel[effect.type]||effect.type||'Расходуемый предмет')+(effect.value?' · '+effect.value:'')+'</p><div class="ingredientList">'+parts.join('')+'</div><button class="goldBtn mini craftBtn" data-id="'+r.id+'" '+(can?'':'disabled')+'>'+(can?'Создать':'Не хватает ресурсов')+'</button></div>';
   }).join('');
-  $$('.craftBtn',g).forEach(b=>b.onclick=async()=>{try{b.disabled=true;const d=await api('/api/profile/craft',{method:'POST',body:JSON.stringify({name:S.name,recipeId:b.dataset.id,quantity:1})});S.profile=d.profile;renderProfile();await loadCrafting();toast('Создано: '+d.item.name)}catch(e){toast(e.message);b.disabled=false}});
+  $$('.craftBtn',g).forEach(b=>b.onclick=async()=>{try{b.disabled=true;const d=await api('/api/profile/craft',{method:'POST',body:JSON.stringify({name:S.name,recipeId:b.dataset.id,quantity:1})});S.profile=d.profile;renderProfile();await loadCrafting();toast('Создано: '+d.item.name)}catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message);b.disabled=false}});
 }
 async function loadMarket(){
   const g=$('#marketGrid');if(!g)return;
@@ -258,15 +258,20 @@ function renderCharacterCard(c){
   const labels={strength:'СИЛ',agility:'ЛОВ',endurance:'ВЫН',perception:'ВОС',intelligence:'ИНТ',charisma:'ХАР'};
   const attrs=Object.entries(c.attributes||{}).map(([k,v])=>'<span><b>'+esc(labels[k]||k)+'</b><i>'+(v>=0?'+':'')+v+'</i></span>').join('');
   const skills=(c.dynamicSkills||[]).map(s=>'<span><b>'+esc(s.name)+'</b><i>+'+(s.rank||0)+'</i></span>').join('');
-  const abilities=(c.abilities||[]).map(x=>typeof x==='string'?'<span>✦ '+esc(x)+'</span>':'<span class="abilityMechanic"><b>✦ '+esc(x.name)+'</b><small>'+esc(x.damage||'—')+' · '+(x.range||0)+' м · '+(x.targets||1)+' цель · '+esc(x.damageType||'effect')+(x.cooldown?' · CD '+x.cooldown:'')+'</small></span>').join('');
+  const pools=Object.values(c.combat?.resources||{});
+  const resources=pools.map(r=>'<div class="resourceRow"><div><b>'+esc(r.label||r.id)+'</b><small>'+r.current+' / '+r.max+' зарядов</small></div><div class="resourceBar"><i style="width:'+Math.round((r.max?r.current/r.max:0)*100)+'%"></i></div></div>').join('');
+  const abilities=(c.abilities||[]).map(x=>typeof x==='string'?'<span>✦ '+esc(x)+'</span>':'<span class="abilityMechanic"><b>✦ '+esc(x.name)+'</b><small>'+esc(x.damage||'—')+' · '+(x.range||0)+' м · '+(x.targets||1)+' цель · '+esc(x.damageType||'effect')+(x.resource?.cost?' · '+esc(x.resource.label||x.resource.pool)+' −'+x.resource.cost:'')+(x.cooldown?' · CD '+x.cooldown:'')+'</small></span>').join('');
   const combat=c.combat||{},points=Number(c.developmentPoints)||0;
-  const evolution=points>0?'<div class="abilityEvolution"><div><small>РАЗВИТИЕ · '+points+' оч.</small><b>Предложи направление сам</b></div><select id="evolveAbilitySelect">'+(c.abilities||[]).map(x=>'<option value="'+esc(x.id||'')+'">Изменить: '+esc(x.name||x.fantasy||'Способность')+'</option>').join('')+'<option value="__new__">Создать новую способность</option></select><input id="evolveAbilityIdea" maxlength="180" placeholder="Например: хочу оставлять Разрез как ловушку"><button id="evolveAbilityBtn" class="softBtn">Сбалансировать развитие</button></div>':'';
+  const abilityEvolution=points>0?'<div class="abilityEvolution"><div><small>РАЗВИТИЕ · '+points+' оч.</small><b>Предложи направление сам</b></div><select id="evolveAbilitySelect">'+(c.abilities||[]).map(x=>'<option value="'+esc(x.id||'')+'">Изменить: '+esc(x.name||x.fantasy||'Способность')+'</option>').join('')+'<option value="__new__">Создать новую способность</option></select><input id="evolveAbilityIdea" maxlength="180" placeholder="Например: хочу оставлять Разрез как ловушку"><button id="evolveAbilityBtn" class="softBtn">Сбалансировать развитие</button></div>':'';
+  const resourceEvolution=points>0&&pools.length?'<div class="resourceUpgrade"><div><small>ЗАПАС ЗАРЯДОВ</small><b>Увеличить максимум ресурса</b></div><select id="resourceUpgradeSelect">'+pools.map(r=>'<option value="'+esc(r.id)+'">'+esc(r.label)+' · '+r.max+' → '+(r.max+2)+'</option>').join('')+'</select><button id="resourceUpgradeBtn" class="softBtn">+2 к максимуму · 1 очко</button></div>':'';
   $('#charCard').innerHTML='<div class="generatedCharacter"><div class="charTitle"><small>LEVEL '+c.level+' · XP '+(c.xp||0)+' · CORE '+esc(c.coreVersion||'legacy')+'</small><h3>'+esc(c.name||c.archetype)+'</h3></div><p>'+esc(c.concept)+'</p>'+
     '<div class="combatSummary"><span>HP <b>'+(combat.hp_current??'—')+'/'+(combat.hp_max??'—')+'</b></span><span>Уклонение <b>'+(combat.evasion??'—')+'</b></span><span>Инициатива <b>'+((combat.initiative??0)>=0?'+':'')+(combat.initiative??0)+'</b></span></div>'+
+    (resources?'<p class="railLabel">РЕСУРСЫ / ЗАРЯДЫ</p><div class="resourceGrid">'+resources+'</div>':'')+
     '<p class="railLabel">ХАРАКТЕРИСТИКИ</p><div class="skillGrid attributesGrid">'+attrs+'</div>'+
     (skills?'<p class="railLabel">ДИНАМИЧЕСКИЕ НАВЫКИ</p><div class="skillGrid">'+skills+'</div>':'')+
-    '<p class="railLabel">СПОСОБНОСТИ</p><div class="abilityList">'+abilities+'</div>'+evolution+'</div>';
+    '<p class="railLabel">СПОСОБНОСТИ</p><div class="abilityList">'+abilities+'</div>'+abilityEvolution+resourceEvolution+'</div>';
   const btn=document.getElementById('evolveAbilityBtn');if(btn)btn.onclick=async()=>{const sel=document.getElementById('evolveAbilitySelect'),idea=document.getElementById('evolveAbilityIdea')?.value.trim();if(!idea)return toast('Опиши направление развития');try{btn.disabled=true;const isNew=sel.value==='__new__',d=await api('/api/profile/ability-evolve',{method:'POST',body:JSON.stringify({name:S.name,mode:isNew?'new':'modify',abilityId:isNew?null:sel.value,idea})});S.profile=d.profile;renderProfile();renderCharacterCard(d.character);toast('Способность сбалансирована: '+d.ability.name)}catch(e){toast(e.message==='no_development_points'?'Нет очков развития':e.message)}finally{btn.disabled=false}};
+  const rb=document.getElementById('resourceUpgradeBtn');if(rb)rb.onclick=async()=>{const poolId=document.getElementById('resourceUpgradeSelect')?.value;if(!poolId)return;try{rb.disabled=true;const d=await api('/api/profile/resource-upgrade',{method:'POST',body:JSON.stringify({name:S.name,poolId})});S.profile=d.profile;renderProfile();renderCharacterCard(d.character);toast(d.resource.label+': максимум '+d.resource.max)}catch(e){toast(e.message==='no_development_points'?'Нет очков развития':e.message)}finally{rb.disabled=false}};
 }
 function myRoomPlayer(){return S.room?.players?.find(p=>p.id===S.profile?.id)||null}
 function loadoutPreview(){
@@ -295,7 +300,7 @@ function renderLoadout(){
 }
 async function saveLoadout(){
   const items=$$('.loadoutCheck:checked').map(c=>({itemId:c.dataset.id,quantity:Number(document.querySelector('.loadoutQty[data-id="'+c.dataset.id+'"]')?.value||1)}));
-  try{const d=await api('/api/rooms/'+S.room.code+'/loadout',{method:'POST',body:JSON.stringify({name:S.name,items})});S.room=d.room;renderRoom();toast('Рюкзак сохранён: '+d.usage+' / '+d.capacity)}catch(e){toast(e.message)}
+  try{const d=await api('/api/rooms/'+S.room.code+'/loadout',{method:'POST',body:JSON.stringify({name:S.name,items})});S.room=d.room;renderRoom();toast('Рюкзак сохранён: '+d.usage+' / '+d.capacity)}catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}
 }
 
 function renderGame(result=null){
@@ -308,7 +313,7 @@ function renderGame(result=null){
   const progress=Math.round(r.progress||0);$('#runProgressText').textContent=progress+'%';$('#runProgressFill').style.width=progress+'%';$('#extractRun').disabled=progress<100||r.completed;$('#extractRun').textContent=r.completed?'Завершено':progress>=100?'Эвакуироваться':'Эвакуация '+progress+'%';
   $('#party').innerHTML=(r.players||[]).map((p,i)=>'<div class="partyMember '+(!p.alive?'dead':'')+'"><b>'+esc(p.name)+'</b><small>'+(p.character?esc(p.character.name||p.character.archetype)+' · '+p.wounds+'/3 раны':'Без героя')+'</small><span>'+(i===r.turnIndex?'ХОД':'')+'</span></div>').join('');
   const me=myRoomPlayer();
-  if($('#myStats')){const c=me?.character||{},combat=c.combat||{},def=me?.defense||{},inj=(c.injuries||[]).length;$('#myStats').innerHTML=me?'<small>ТВОЙ ГЕРОЙ</small><b>'+esc(c.name||c.archetype||'—')+'</b><div class="heroCombatMini"><span>HP <b>'+(combat.hp_current??'—')+'/'+(combat.hp_max??'—')+'</b></span><span>EVA <b>'+(combat.evasion??'—')+'</b></span><span>ARM <b>'+(def.armor?.effective??0)+'</b></span></div><span>Травмы '+inj+' · Рюкзак '+me.runUsage+'/'+me.capacity+'</span>':''}
+  if($('#myStats')){const c=me?.character||{},combat=c.combat||{},def=me?.defense||{},inj=(c.injuries||[]).length,pools=Object.values(combat.resources||{}),charge=pools.length?'<span class="miniResource">'+pools.map(r=>esc(r.label)+' '+r.current+'/'+r.max).join(' · ')+'</span>':'';$('#myStats').innerHTML=me?'<small>ТВОЙ ГЕРОЙ</small><b>'+esc(c.name||c.archetype||'—')+'</b><div class="heroCombatMini"><span>HP <b>'+(combat.hp_current??'—')+'/'+(combat.hp_max??'—')+'</b></span><span>EVA <b>'+(combat.evasion??'—')+'</b></span><span>ARM <b>'+(def.armor?.effective??0)+'</b></span></div>'+charge+'<span>Травмы '+inj+' · Рюкзак '+me.runUsage+'/'+me.capacity+'</span>':''}
   const ctx=$('#sceneContext');if(ctx)ctx.innerHTML='<small>ТЕКУЩАЯ ПОЗИЦИЯ</small><b>'+esc(me?.position?.anchorId||'canonical scene')+'</b><span>'+esc(event?.genre||'Экспедиция')+' · опасность T'+(event?.danger_tier||1)+'</span>';
   renderRunInventory();
   renderThreats();
@@ -342,19 +347,19 @@ function renderSceneLoot(){
   const box=$('#sceneLoot');if(!box)return;
   const items=(S.room?.scene?.loot||[]).filter(x=>x.status==='scene');
   box.innerHTML=items.length?'<p class="railLabel">ЛУТ СЦЕНЫ</p>'+items.map(i=>'<button class="sceneLootItem" data-id="'+i.id+'"><small>'+esc(i.kind||i.rarity||'loot')+'</small><b>'+esc(i.name)+'</b><span>Подобрать</span></button>').join(''):'';
-  $$('.sceneLootItem',box).forEach(b=>b.onclick=async()=>{try{const d=await api('/api/rooms/'+S.room.code+'/loot/'+b.dataset.id+'/claim',{method:'POST',body:JSON.stringify({name:S.name})});S.room=d.room;S.profile=d.profile;renderGame();renderProfile();toast('Подобрано: '+d.item.name)}catch(e){toast(e.message)}});
+  $$('.sceneLootItem',box).forEach(b=>b.onclick=async()=>{try{const d=await api('/api/rooms/'+S.room.code+'/loot/'+b.dataset.id+'/claim',{method:'POST',body:JSON.stringify({name:S.name})});S.room=d.room;S.profile=d.profile;renderGame();renderProfile();toast('Подобрано: '+d.item.name)}catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}});
 }
 function renderRunInventory(){
   const box=$('#runInventory');if(!box)return;
   const me=myRoomPlayer(),items=me?.runInventory||[];
   box.innerHTML=items.length?items.map(i=>'<div class="runItem"><div><small>'+esc(i.kind||i.rarity||'item')+'</small><b>'+esc(i.name)+(i.stackable?' ×'+(i.quantity||1):'')+'</b></div>'+(i.kind==='consumable'?'<button class="softBtn mini useRunItem" data-id="'+i.id+'">Использовать</button>':'')+'</div>').join(''):'<span class="muted">Пусто</span>';
-  $$('.useRunItem',box).forEach(b=>b.onclick=async()=>{try{const d=await api('/api/rooms/'+S.room.code+'/use-item',{method:'POST',body:JSON.stringify({name:S.name,itemId:b.dataset.id})});S.room=d.room;renderGame();toast('Расходник использован')}catch(e){toast(e.message)}});
+  $$('.useRunItem',box).forEach(b=>b.onclick=async()=>{try{const d=await api('/api/rooms/'+S.room.code+'/use-item',{method:'POST',body:JSON.stringify({name:S.name,itemId:b.dataset.id})});S.room=d.room;renderGame();toast('Расходник использован')}catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}});
   const event=S.room?.event||S.room?.scenario,atForge=event?.enchantment&&me?.position?.anchorId===event.enchantment.anchor_id;
   if(atForge){
     const equipment=items.filter(x=>x.kind==='equipment'),ingredients=items.filter(x=>x.kind==='enchant_ingredient');
     if(equipment.length&&ingredients.length){
       box.insertAdjacentHTML('beforeend','<div class="enchantStation"><small>'+esc(event.enchantment.label)+'</small><b>Зачарование доступно · Q'+event.enchantment.tier+'</b><select id="enchantTarget">'+equipment.map(x=>'<option value="'+x.id+'">'+esc(x.name)+'</option>').join('')+'</select><div id="enchantIngredients">'+ingredients.map(x=>'<label><input type="checkbox" class="enchIng" value="'+x.id+'"> '+esc(x.name)+' ×'+(x.quantity||1)+'</label>').join('')+'</div><button id="enchantNow" class="goldBtn mini">Зачаровать</button></div>');
-      const btn=document.getElementById('enchantNow');if(btn)btn.onclick=async()=>{const targetId=document.getElementById('enchantTarget').value,ingredientIds=[...document.querySelectorAll('.enchIng:checked')].map(x=>x.value);try{const d=await api('/api/rooms/'+S.room.code+'/enchant',{method:'POST',body:JSON.stringify({name:S.name,targetId,ingredientIds})});S.room=d.room;renderGame();toast(d.success?'Зачарование успешно · d20 '+d.roll.die:'Зачарование провалено · d20 '+d.roll.die)}catch(e){toast(e.message)}};
+      const btn=document.getElementById('enchantNow');if(btn)btn.onclick=async()=>{const targetId=document.getElementById('enchantTarget').value,ingredientIds=[...document.querySelectorAll('.enchIng:checked')].map(x=>x.value);try{const d=await api('/api/rooms/'+S.room.code+'/enchant',{method:'POST',body:JSON.stringify({name:S.name,targetId,ingredientIds})});S.room=d.room;renderGame();toast(d.success?'Зачарование успешно · d20 '+d.roll.die:'Зачарование провалено · d20 '+d.roll.die)}catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}};
     }
   }
 }
@@ -369,6 +374,7 @@ async function renderPOV(){
 function applyTurn(d){
   S.room=d.room;S.profile=d.profile;renderProfile();renderGame(d);
   if(d.deathDrop?.length)toast('Персонаж погиб. В сцене осталось '+d.deathDrop.length+' предметов.');
+  else if(d.resourceSpend?.spent)toast(d.resourceSpend.label+': −'+d.resourceSpend.spent+' · осталось '+d.resourceSpend.current+'/'+d.resourceSpend.max);
   else if(d.skillGrowth?.type==='learned')toast('Новый навык: '+d.skillGrowth.skill.name+' +'+d.skillGrowth.skill.rank);
   else if(d.skillGrowth?.type==='rank_up')toast('Навык вырос: '+d.skillGrowth.skill.name+' +'+d.skillGrowth.skill.rank);
   else if(d.transcript)toast('Распознано: '+d.transcript.slice(0,80));
@@ -452,7 +458,7 @@ async function init(){
     const characterId=$('#eventCharacterSelect').value||null;
     const d=await api('/api/rooms',{method:'POST',body:JSON.stringify({name:S.name,eventId:S.selectedEvent,characterId})});
     S.room=d.room;S.profile=d.profile;renderProfile();renderRoom();await wait();show('lobby');music('lobby');
-  }catch(e){toast(e.message)}};
+  }catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}};
   $('#joinRoom').onclick=async()=>{try{
     setName($('#joinName').value);await loadProfile();const code=$('#roomCode').value.trim().toUpperCase();
     const d=await api('/api/rooms/'+code+'/join',{method:'POST',body:JSON.stringify({name:S.name,characterId:S.profile.activeCharacterId})});
@@ -463,13 +469,13 @@ async function init(){
     const d=await api('/api/rooms/'+S.room.code+'/character',{method:'POST',body:JSON.stringify({name:S.name,wish:$('#charWish').value,appearance:$('#charAppearance').value})});
     S.room=d.room;S.profile=d.profile;renderProfile();renderRoom();renderCharacterCard(d.character);$('#saveChar').disabled=false;toast('Новый персонаж занял слот');
   }catch(e){toast(e.message==='character_slots_full'?'Все живые слоты заняты':e.message)}};
-  $('#saveChar').onclick=async()=>{const id=S.profile?.activeCharacterId;if(!id||!S.room)return toast('Сначала создай или выбери героя');try{const b=$('#saveChar');b.disabled=true;const d=await api('/api/rooms/'+S.room.code+'/select-character',{method:'POST',body:JSON.stringify({name:S.name,characterId:id})});S.room=d.room;S.profile=d.profile;renderProfile();renderRoom();toast('Герой подтверждён для экспедиции')}catch(e){toast(e.message)}finally{$('#saveChar').disabled=false}};
+  $('#saveChar').onclick=async()=>{const id=S.profile?.activeCharacterId;if(!id||!S.room)return toast('Сначала создай или выбери героя');try{const b=$('#saveChar');b.disabled=true;const d=await api('/api/rooms/'+S.room.code+'/select-character',{method:'POST',body:JSON.stringify({name:S.name,characterId:id})});S.room=d.room;S.profile=d.profile;renderProfile();renderRoom();toast('Герой подтверждён для экспедиции')}catch(e){toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message)}finally{$('#saveChar').disabled=false}};
   $('#saveLoadout').onclick=saveLoadout;
   $('#startGame').onclick=async()=>{try{
     S.room=await api('/api/rooms/'+S.room.code+'/start',{method:'POST',body:'{}'});renderGame();await wait(550);show('game');
   }catch(e){toast(e.message==='payment_required'?'У одного из игроков нет доступа к событию':e.message)}};
 
-  $('#sendText').onclick=async()=>{const input=$('#textTurn'),button=$('#sendText'),action=input.value.trim();if(!action||button.disabled)return;input.value='';input.disabled=true;button.disabled=true;setVoiceState('GM разрешает действие…','processing');try{applyTurn(await api('/api/rooms/'+S.room.code+'/turn',{method:'POST',body:JSON.stringify({name:S.name,action})}))}catch(e){setVoiceState('Ход не выполнен','error');toast(e.message);setTimeout(()=>setVoiceState('Ожидание хода','idle'),1500)}finally{input.disabled=false;button.disabled=false;input.focus()}};
+  $('#sendText').onclick=async()=>{const input=$('#textTurn'),button=$('#sendText'),action=input.value.trim();if(!action||button.disabled)return;input.value='';input.disabled=true;button.disabled=true;setVoiceState('GM разрешает действие…','processing');try{applyTurn(await api('/api/rooms/'+S.room.code+'/turn',{method:'POST',body:JSON.stringify({name:S.name,action})}))}catch(e){setVoiceState('Ход не выполнен','error');toast(e.message==='insufficient_resource'?'Недостаточно зарядов ресурса':e.message);setTimeout(()=>setVoiceState('Ожидание хода','idle'),1500)}finally{input.disabled=false;button.disabled=false;input.focus()}};
   $('#textTurn').onkeydown=e=>{if(e.key==='Enter')$('#sendText').click()};
   $('#extractRun').onclick=async()=>{try{const d=await api('/api/rooms/'+S.room.code+'/extract',{method:'POST',body:JSON.stringify({name:S.name})});S.room=d.room;S.profile=d.profile;renderProfile();renderGame();const mine=d.rewards.find(x=>x.profileId===S.profile.id);toast(mine?'Эвакуация успешна · +'+mine.xp+' XP · '+mine.unique.length+' уник. предметов':'Приключение завершено')}catch(e){toast(e.message==='objectives_incomplete'?'Сначала заверши цели: '+(e.data?.progress||0)+'%':e.message)}};
   $('#copyLink').onclick=()=>navigator.clipboard?.writeText(location.origin+'?room='+(S.room?.code||'')).then(()=>toast('Ссылка скопирована'));
