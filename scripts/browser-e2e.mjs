@@ -22,6 +22,7 @@ try {
   await launch();browser=await chromium.launch({headless:true,args:['--no-sandbox']});
   const host=await browser.newContext(),guest=await browser.newContext(),A=await host.newPage(),B=await guest.newPage();
   await Promise.all([A.goto(origin),B.goto(origin)]);
+  await A.locator('#hostBtn').click();await B.locator('#joinBtn').click();
   await A.locator('#playerName').fill('Browser Host');
   await A.locator('#createRoom').click();
   await A.locator('#lobby.screen.active').waitFor();
