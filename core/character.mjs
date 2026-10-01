@@ -28,6 +28,60 @@ export function inferDynamicSkills(concept='',archetype=''){
   return out;
 }
 
+export function resourcePoolForFantasy(fantasy=''){
+  const t=String(fantasy||'').toLowerCase();
+  if(/проклят|curse|cursed/.test(t))return{id:'cursed_energy',label:'Проклятая энергия'};
+  if(/мана|mana|аркан|маг|некром|ритуал/.test(t))return{id:'mana',label:'Мана'};
+  if(/ярост|rage/.test(t))return{id:'rage',label:'Ярость'};
+  if(/простран|энерг|телепорт|псих|молни|огн|плам/.test(t))return{id:'technique_energy',label:'Энергия техники'};
+  return{id:'energy',label:'Энергия'};
+}
+
+export function resourceBaseMax(level=1){
+  const lvl=clamp(Number(level)||1,1,50);
+  return 6+Math.floor((lvl-1)/5);
+}
+
+export function ensureCharacterResources(character){
+  character.combat=character.combat||deriveCombat(character.attributes||{},character.level||1);
+  character.combat.resources=character.combat.resources&&typeof character.combat.resources==='object'?character.combat.resources:{};
+  for(const ability of character.abilities||[]){
+    if(!ability?.resource?.pool)continue;
+    const poolId=ability.resource.pool,meta=resourcePoolForFantasy(ability.fantasy||ability.name||poolId),existing=character.combat.resources[poolId];
+    const baseMax=resourceBaseMax(character.level||1),upgradeLevel=Math.max(0,Number(existing?.upgradeLevel)||0),max=Math.max(Number(existing?.max)||0,baseMax+upgradeLevel*2);
+    character.combat.resources[poolId]={
+      id:poolId,label:existing?.label||ability.resource.label||meta.label,current:Math.min(Number.isFinite(Number(existing?.current))?Number(existing.current):max,max),
+      max,baseMax,upgradeLevel,refill:'expedition_start'
+    };
+  }
+  return character.combat.resources;
+}
+
+export function refillCharacterResources(character){
+  const resources=ensureCharacterResources(character);
+  for(const pool of Object.values(resources))pool.current=pool.max;
+  return resources;
+}
+
+export function abilityResourceState(character,ability){
+  if(!ability?.resource?.pool||!(Number(ability.resource.cost)>0))return{required:false,cost:0,pool:null};
+  const resources=ensureCharacterResources(character),pool=resources[ability.resource.pool],cost=Math.max(1,Math.floor(Number(ability.resource.cost)||1));
+  return{required:true,cost,pool};
+}
+
+export function spendAbilityResource(character,ability){
+  const state=abilityResourceState(character,ability);if(!state.required)return{spent:0,pool:null};
+  if(!state.pool||state.pool.current<state.cost){const e=new Error('insufficient_resource');e.pool=state.pool?.id||ability.resource.pool;e.required=state.cost;e.current=state.pool?.current||0;throw e}
+  state.pool.current-=state.cost;
+  return{spent:state.cost,poolId:state.pool.id,label:state.pool.label,current:state.pool.current,max:state.pool.max};
+}
+
+export function upgradeResourcePool(character,poolId){
+  materializeCharacterCore(character);const resources=ensureCharacterResources(character),pool=resources[poolId];if(!pool)throw new Error('resource_pool_not_found');
+  pool.upgradeLevel=(Number(pool.upgradeLevel)||0)+1;pool.max=resourceBaseMax(character.level||1)+pool.upgradeLevel*2;pool.baseMax=resourceBaseMax(character.level||1);pool.current=pool.max;
+  return{...pool};
+}
+
 export function abilityBudget(level=1){
   const lvl=clamp(Number(level)||1,1,50);
   return{damage:8+Math.floor((lvl-1)/3)*2,control:1+Math.floor((lvl-1)/5),area:1+Math.floor((lvl-1)/6),range:10+Math.floor((lvl-1)/4)*5};
@@ -35,8 +89,8 @@ export function abilityBudget(level=1){
 
 export function balanceAbilityFantasy(fantasy='Основной приём',level=1){
   const name=String(fantasy||'Основной приём').slice(0,64),t=name.toLowerCase(),budget=abilityBudget(level);
-  let damage='1d8',range=Math.min(10,budget.range),targets=1,cooldown=0,cost=null,control=null,damageType='physical',attackAttribute='agility',skill=null;
-  if(/разрез|реж|клин|меч/.test(t)){damageType=/простран/.test(t)?'spatial_slash':'slashing';skill=/простран|маг/.test(t)?'Аркана':null}
+  let damage='1d8',range=Math.min(10,budget.range),targets=1,cooldown=0,cost=null,control=null,damageType='physical',attackAttribute='agility',skill=null,resource=null;
+  if(/разрез|реж|клин|меч/.test(t)){damageType=/простран/.test(t)?'spatial_slash':'slashing';skill=/простран|маг|проклят/.test(t)?'Аркана':null}
   if(/огн|плам/.test(t))damageType='fire';
   if(/молот|дроб|кулак/.test(t)){damageType='blunt';attackAttribute='strength'}
   if(/стрел|лук|винтов|пистолет/.test(t)){damageType='piercing';skill='Баллистика';range=Math.min(20,budget.range+10)}
@@ -44,7 +98,12 @@ export function balanceAbilityFantasy(fantasy='Основной приём',leve
   if(/замед|оглуш|стан|silence|немот/.test(t)){damage='1d6';control={type:/оглуш|стан/.test(t)?'stun':'slow',value:1}}
   if(/уничтож|аннигил|12d20|смерт|ваншот|реальност/.test(t)){damage='1d8';cooldown=1}
   if(/мощн|сильн|усилен|burst/.test(t)){damage='1d10';cooldown=Math.max(cooldown,2)}
-  return{id:slug(name),name,fantasy:name,type:'active_attack',actionCost:1,range,targets,damage,damageType,attackAttribute,skill,accuracy:0,minDamage:damageType==='spatial_slash'?1:0,control,cooldown,cost,budgetVersion:'v0.1'};
+  const powered=/простран|проклят|curse|cursed|маг|аркан|мана|некром|ритуал|телепорт|псих|молни|огн|плам|энерг/.test(t);
+  if(powered){
+    const pool=resourcePoolForFantasy(t),expensive=targets>1||damage==='1d10'||/уничтож|аннигил|реальност|мощн|усилен/.test(t);
+    resource={pool:pool.id,label:pool.label,cost:expensive?2:1};
+  }
+  return{id:slug(name),name,fantasy:name,type:'active_attack',actionCost:1,range,targets,damage,damageType,attackAttribute,skill,accuracy:0,minDamage:damageType==='spatial_slash'?1:0,control,cooldown,cost,resource,budgetVersion:'v0.2'};
 }
 
 function oldStat(character,label,fallback=1){
@@ -53,7 +112,7 @@ function oldStat(character,label,fallback=1){
 }
 
 export function materializeCharacterCore(character={}){
-  if(character.coreVersion==='0.1'&&character.attributes&&character.combat)return character;
+  if(character.coreVersion==='0.2'&&character.attributes&&character.combat){ensureCharacterResources(character);return character;}
   const attrs=character.attributes?normalizeAttributes(character.attributes):normalizeAttributes({
     strength:oldStat(character,'Сила',defaultAttributes(character.archetype,character.concept).strength),
     agility:oldStat(character,'Ловкость',defaultAttributes(character.archetype,character.concept).agility),
@@ -71,7 +130,8 @@ export function materializeCharacterCore(character={}){
   else{const derived=deriveCombat(attrs,character.level);character.combat={...derived,...character.combat,hp_max:Math.max(character.combat.hp_max||0,derived.hp_max),hp_current:Math.min(character.combat.hp_current??derived.hp_current,Math.max(character.combat.hp_max||0,derived.hp_max))}}
   character.injuries=Array.isArray(character.injuries)?character.injuries:[];
   character.developmentPoints=Math.max(0,Number(character.developmentPoints)||0);
-  character.coreVersion='0.1';
+  ensureCharacterResources(character);
+  character.coreVersion='0.2';
   return character;
 }
 
@@ -120,10 +180,10 @@ export function evolveAbilityDefinition(character,{abilityId=null,idea='',mode='
   if(mode==='new'){
     if(abilities.length>=maxAbilitySlots(character.level))throw new Error('ability_slots_full');
     const next={...balanced,revision:1,evolutionHistory:[{from:null,idea:fantasy,level:character.level||1}]};
-    abilities.push(next);return next;
+    abilities.push(next);ensureCharacterResources(character);return next;
   }
   const index=abilities.findIndex(x=>x.id===abilityId);if(index<0)throw new Error('ability_not_found');
   const prev=abilities[index],history=Array.isArray(prev.evolutionHistory)?prev.evolutionHistory:[];
   const next={...balanced,id:prev.id,revision:(Number(prev.revision)||1)+1,evolutionHistory:[...history,{from:prev.name,idea:fantasy,level:character.level||1}].slice(-12)};
-  abilities[index]=next;return next;
+  abilities[index]=next;ensureCharacterResources(character);return next;
 }
