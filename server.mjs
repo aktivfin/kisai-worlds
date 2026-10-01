@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { GM_VOICE_PROFILES, PLAYER_VOICE_PROFILES, assignNpcVoiceProfile, profileForSpeaker, speechInstructions, publicVoiceCatalog, makeVoiceEvent, voiceProfile } from './core/voice.mjs';
 import { resolveAttack, resolveCheck, conditionLabel, effectiveArmor } from './core/combat.mjs';
 import { materializeCharacterCore, createNpcCombatant, balanceAbilityFantasy, recordSkillUse, evolveAbilityDefinition, spendAbilityResource, refillCharacterResources, upgradeResourcePool, refreshResourceCaps } from './core/character.mjs';
 
@@ -77,13 +78,13 @@ async function resolveGMAI(room,action,actor){
   const player=room.players.get(actor.id),fallback=fallbackGM(room,action,actor);
   if(!providerReady('llm'))return fallback;
   const recent=room.log.slice(0,8).reverse().map(x=>x.actor+': '+x.action+' -> '+x.narration).join('\n');
-  const system='You are Intent Interpreter, not Rules Engine. Return ONLY JSON: {"check_required":boolean,"check_attribute":"strength|agility|endurance|perception|intelligence|charisma","check_skill":string|null,"difficulty_shift":-1|0|1,"danger":"safe|risky|lethal","success_narration":string,"failure_narration":string,"no_check_narration":string,"music_state":"explore|tavern|investigation|discovery|tension|chase|ritual|abyss|dread|hell|boss|grief","move_to":string|null,"loot":boolean}. Never invent dice, DC, damage, armor, HP or final mechanical outcome. move_to may only be an existing anchor id. Do not adapt difficulty to party size.';
+  const system='You are Intent Interpreter, not Rules Engine. Return ONLY JSON: {"check_required":boolean,"check_attribute":"strength|agility|endurance|perception|intelligence|charisma","check_skill":string|null,"difficulty_shift":-1|0|1,"danger":"safe|risky|lethal","success_narration":string,"failure_narration":string,"no_check_narration":string,"npc_dialogue":[{"speaker_id":string,"text":string,"emotion":string}],"music_state":"explore|tavern|investigation|discovery|tension|chase|ritual|abyss|dread|hell|boss|grief","move_to":string|null,"loot":boolean}. GM narration describes scene/actions/consequences only. NEVER put spoken NPC dialogue or quotes inside GM narration. NPC speech belongs only in npc_dialogue. Never invent dice, DC, damage, armor, HP or final mechanical outcome. speaker_id must be an existing scene combatant id. move_to may only be an existing anchor id. Do not adapt difficulty to party size.';
   const user='FIXED EVENT TIER '+(room.scenario?.danger_tier||1)+'; recommended party '+(room.scenario?.recommended_players||1)+'; progress '+(room.progress||0)+'/100.\nEvent: '+room.scenario?.title+'\nGeometry: '+JSON.stringify(room.scene.geometry)+'\nPlayer: '+JSON.stringify({character:actor.character,wounds:player?.wounds||0,runInventory:(player?.runInventory||[]).map(x=>x.name)})+'\nRecent:\n'+recent+'\nAction: '+action;
   try{
     const x=safeJsonText(await openAIChat([{role:'system',content:system},{role:'user',content:user}],.55));if(!x)return fallback;
     const attributes=['strength','agility','endurance','perception','intelligence','charisma'],music=['explore','tavern','investigation','discovery','tension','chase','ritual','abyss','dread','hell','boss','grief'];
     return{check_required:Boolean(x.check_required),check_attribute:attributes.includes(x.check_attribute)?x.check_attribute:fallback.check_attribute,check_skill:typeof x.check_skill==='string'?x.check_skill.slice(0,40):fallback.check_skill,difficulty_shift:clamp(Number(x.difficulty_shift)||0,-1,1),
-      danger:['safe','risky','lethal'].includes(x.danger)?x.danger:'safe',success_narration:String(x.success_narration||fallback.success_narration).slice(0,650),
+      danger:['safe','risky','lethal'].includes(x.danger)?x.danger:'safe',npc_dialogue:Array.isArray(x.npc_dialogue)?x.npc_dialogue.slice(0,3).map(v=>({speaker_id:String(v.speaker_id||'').slice(0,80),text:String(v.text||'').slice(0,260),emotion:String(v.emotion||'neutral').slice(0,32)})).filter(v=>v.text):fallback.npc_dialogue,success_narration:String(x.success_narration||fallback.success_narration).slice(0,650),
       failure_narration:String(x.failure_narration||fallback.failure_narration).slice(0,650),no_check_narration:String(x.no_check_narration||fallback.no_check_narration).slice(0,650),
       music_state:music.includes(x.music_state)?x.music_state:fallback.music_state,move_to:typeof x.move_to==='string'?x.move_to:null,loot:Boolean(x.loot)};
   }catch(e){console.warn('GM planner fallback:',e.message);return fallback}
@@ -95,19 +96,34 @@ async function transcribeAudio(audioBase64,mimeType='audio/webm'){
   const r=await fetch(String(c.base_url).replace(/\/$/,'')+'/audio/transcriptions',{method:'POST',headers:{authorization:'Bearer '+c.api_key},body:form});
   if(!r.ok) throw new Error('stt_'+r.status); const d=await r.json(); return String(d.text||'').trim();
 }
-async function synthesizeSpeech(text){
+async function synthesizeSpeech(text,profile=null,event={}){
   const c=runtimeConfig().tts||{}; if(!c.api_key||!c.model||!text) return null;
-  if((c.provider||'openai')==='openai'){
+  const provider=(c.provider||'openai'),providerVoice=profile?.providerVoice?.[provider]||c.voice;
+  if(provider==='openai'){
     if(!c.base_url)return null;
-    const r=await fetch(String(c.base_url).replace(/\/$/,'')+'/audio/speech',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+c.api_key},body:JSON.stringify({model:c.model,voice:c.voice||'alloy',input:text,format:'mp3'})});
+    const payload={model:c.model,voice:providerVoice||'alloy',input:text,format:'mp3'};
+    const instructions=speechInstructions(profile,event);if(instructions)payload.instructions=instructions;
+    const r=await fetch(String(c.base_url).replace(/\/$/,'')+'/audio/speech',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+c.api_key},body:JSON.stringify(payload)});
     if(!r.ok)return null; return Buffer.from(await r.arrayBuffer()).toString('base64');
   }
-  if(c.provider==='elevenlabs'&&c.base_url&&c.voice){
-    const r=await fetch(String(c.base_url).replace(/\/$/,'')+'/v1/text-to-speech/'+encodeURIComponent(c.voice),{method:'POST',headers:{'content-type':'application/json','xi-api-key':c.api_key},body:JSON.stringify({text,model_id:c.model})});
+  if(provider==='elevenlabs'&&c.base_url&&providerVoice){
+    const style=profile?.style||{},r=await fetch(String(c.base_url).replace(/\/$/,'')+'/v1/text-to-speech/'+encodeURIComponent(providerVoice),{method:'POST',headers:{'content-type':'application/json','xi-api-key':c.api_key},body:JSON.stringify({text,model_id:c.model,voice_settings:{stability:clamp(0.72-(style.roughness||0)*.25,.2,.9),similarity_boost:.78,style:clamp(Math.abs(style.pitch||0)*.05+(event.emotion&&event.emotion!=='neutral'?.18:.06),0,.5)}})});
     if(!r.ok)return null; return Buffer.from(await r.arrayBuffer()).toString('base64');
   }
   return null;
 }
+async function synthesizeVoiceQueue(events,room){
+  const out=[];
+  for(const event of events||[]){
+    if(event.speakerType==='SYSTEM'||!event.text){out.push({...event,audioBase64:null});continue}
+    const speaker=event.speakerType==='NPC'?(room.scene.combatants||[]).find(x=>x.id===event.speakerId):event.speakerType==='PLAYER'?[...room.players.values()].map(x=>x.character).find(x=>x?.id===event.speakerId):null;
+    const profile=profileForSpeaker({speakerType:event.speakerType,speaker,room});let audioBase64=null;
+    try{audioBase64=await synthesizeSpeech(event.text,profile,event)}catch(e){console.warn('TTS event fallback:',e.message)}
+    out.push({...event,voiceProfileId:profile?.id||null,audioBase64,audioMime:'audio/mpeg'});
+  }
+  return out;
+}
+
 function tryAddRunItem(r,player,item){
   player.runInventory=player.runInventory||[];player.capacity=player.capacity||runCapacity(player.profile.character);item.status='run';item.ownerId=player.id;
   if(inventoryUsage(player.runInventory)+stackCost(item)<=player.capacity){player.runInventory.push(item);return'run'}
@@ -167,6 +183,39 @@ async function narrateCombatOutcome(room,actor,action,target,result){
   const facts={action,attacker:actor.character?.name||actor.name,target:target.name,result};
   try{const text=await openAIChat([{role:'system',content:system},{role:'user',content:JSON.stringify(facts)}],.45);return String(text||fallback).slice(0,700)}catch{return fallback}
 }
+function socialAction(action=''){return /говор|спраш|скажи|отвеч|убеж|угрож|крич|шеп|зову|кто ты|что тебе|зачем|поговор/i.test(String(action))}
+function fallbackNpcDialogue(room,action){
+  const npc=(room.scene.combatants||[]).find(x=>x.status!=='dead');if(!npc||!socialAction(action))return[];
+  const t=normalize(action),panic=(npc.morale||100)<35;
+  let text=panic?'Хватит. Я ухожу.':/угрож|отреж|убью|сломаю/.test(t)?'Попробуй. Только сделай ещё шаг.':/кто ты|имя/.test(t)?'Тебе это знать не нужно.':'Говори. Я слушаю.';
+  return[{speaker_id:npc.id,text,emotion:panic?'fear':'guarded'}];
+}
+function npcCombatBark(target,combat,counterattack){
+  if(!target||target.status==='dead'||combat?.killed)return null;
+  if((combat?.armor?.wear?.wear||0)>=6)return{text:'Он режет броню! Назад!',emotion:'panic'};
+  if((combat?.damage?.hp||0)>=5)return{text:'Чёрт... держи дистанцию!',emotion:'pain'};
+  if(counterattack?.hit)return{text:'Попался.',emotion:'aggressive'};
+  return null;
+}
+function mechanicsVoiceEvent(committed){
+  if(committed?.combat)return makeVoiceEvent({speakerType:'SYSTEM',speakerId:'SYSTEM',type:'mechanics',mechanics:{combat:committed.combat,counterattack:committed.counterattack||null,resourceSpend:committed.resourceSpend||null}});
+  if(committed?.dice)return makeVoiceEvent({speakerType:'SYSTEM',speakerId:'SYSTEM',type:'mechanics',mechanics:{dice:committed.dice,woundsAdded:committed.woundsAdded||0}});
+  return null;
+}
+function buildVoiceEvents(room,actor,action,committed,proposal={}){
+  const events=[];
+  if(committed?.narration)events.push(makeVoiceEvent({speakerType:'GM',speakerId:'GM',type:'narration',text:committed.narration}));
+  const system=mechanicsVoiceEvent(committed);if(system)events.push(system);
+  const target=(room.scene.combatants||[]).find(x=>x.id===committed?.combat?.targetId)||(room.scene.combatants||[]).find(x=>x.status!=='dead');
+  const bark=committed?.combat?npcCombatBark(target,committed.combat,committed.counterattack):null;
+  if(bark&&target)events.push(makeVoiceEvent({speakerType:'NPC',speakerId:target.id,type:'dialogue',text:bark.text,emotion:bark.emotion}));
+  else for(const line of proposal?.npc_dialogue||fallbackNpcDialogue(room,action)) {
+    const npc=(room.scene.combatants||[]).find(x=>x.id===line.speaker_id)||target;if(npc)events.push(makeVoiceEvent({speakerType:'NPC',speakerId:npc.id,type:'dialogue',text:line.text,emotion:line.emotion||npc.currentEmotion||'neutral'}));
+  }
+  if(!room.completed)events.push(makeVoiceEvent({speakerType:'TIMER',speakerId:'GM',type:'timer',text:'Твой ход.',seconds:60}));
+  return events.filter(x=>x.speakerType==='SYSTEM'||x.text);
+}
+
 async function commitCombatTurn(r,p,action,{targetId=null,abilityId=null,targetArea=null,aimed=null}={}){
   const player=r.players.get(p.id);if(!player)throw new Error('player_not_in_room');const character=materializeCharacterCore(p.character||player.character);
   const target=(r.scene.combatants||[]).find(x=>x.id===targetId&&x.status!=='dead')||(r.scene.combatants||[]).find(x=>x.status!=='dead');if(!target)throw new Error('no_hostile_target');
@@ -453,7 +502,7 @@ function chooseCheck(action){
 function fallbackGM(room,action,actor){
   const t=normalize(action),risky=/атак|удар|реж|стрел|прыг|взлом|крад|бег|ритуал|слом|лез|переб|плыв/.test(t),lethal=/пропаст|огн|босс|бездн|смертел|прыгаю вниз|прыжок вниз/.test(t),check=chooseCheck(action);
   const anchor=room.scene.geometry?.anchors?.find(x=>t.includes(normalize(x.label))||t.includes(normalize(x.id)));
-  return{check_required:risky,check_attribute:check.attribute,check_skill:check.skill,difficulty_shift:0,danger:lethal?'lethal':risky?'risky':'safe',
+  return{check_required:risky,check_attribute:check.attribute,check_skill:check.skill,difficulty_shift:0,danger:lethal?'lethal':risky?'risky':'safe',npc_dialogue:fallbackNpcDialogue(room,action),
     success_narration:(actor.character?.name||actor.name)+' добивается результата.',failure_narration:'Попытка проваливается и создаёт осложнение.',
     no_check_narration:(actor.character?.name||actor.name)+' действует: '+action+'.',music_state:risky?'tension':'explore',move_to:anchor?.id||null,loot:risky};
 }
@@ -511,6 +560,8 @@ function encounterName(scenario){
 }
 function createScene(scenario,narration){
   const hostile=createNpcCombatant({id:id('enemy'),name:encounterName(scenario),tier:scenario?.danger_tier||1});
+  assignNpcVoiceProfile(hostile,{unique:(scenario?.danger_tier||1)>=5,seed:scenario?.id||hostile.name});
+  hostile.temperament=hostile.temperament||((scenario?.danger_tier||1)>=4?'aggressive':'guarded');hostile.currentEmotion='alert';hostile.morale=100;
   return {id:id('scene'),title:scenario?.title||'Сцена',narration:narration??scenario?.opening??'',music_state:'explore',intensity:.25,loot:[],combatants:[hostile],geometry:sceneGeometryFor(scenario)};
 }
 function spawnPosition(scene,index=0){
@@ -533,6 +584,7 @@ async function createPersistentCharacter(p,wish,appearance){
   let generated=null;try{generated=await generateCharacterAI(wish,appearance)}catch(e){console.warn('character AI fallback:',e.message)}
   const c=materializeCharacterCore(generated||fallbackCharacter(wish,appearance));
   Object.assign(c,{id:c.id||id('char'),status:'alive',xp:Number(c.xp)||0,level:Number(c.level)||1,createdAt:now(),runs:0,wins:0});
+  c.voiceProfileId=c.voiceProfileId||PLAYER_VOICE_PROFILES[0].id;c.voiceMode=['raw','character','manual'].includes(c.voiceMode)?c.voiceMode:'raw';
   p.characters.push(c);p.activeCharacterId=c.id;syncActiveCharacter(p);saveState();return c;
 }
 function selectCharacter(p,characterId){
@@ -603,7 +655,7 @@ function runDefenseView(player){
     armor:armor?{id:armor.id,name:armor.name,base:armor.baseArmor??armor.armor??0,effective:effectiveArmor(armor,'torso'),durability:armor.durability??100,condition:armor.condition||conditionLabel(armor.durability??100)}:null};
 }
 function roomView(r){
-  return {code:r.code,scenario:r.scenario,event:r.scenario,hostId:r.hostId,started:r.started,completed:Boolean(r.completed),outcome:r.outcome||null,
+  return {code:r.code,scenario:r.scenario,event:r.scenario,hostId:r.hostId,voice:r.voice||{gmVoiceId:GM_VOICE_PROFILES[0].id},started:r.started,completed:Boolean(r.completed),outcome:r.outcome||null,
     turnIndex:r.turnIndex,progress:r.progress||0,participantsAtStart:r.participantsAtStart||0,scene:r.scene,log:(r.log||[]).slice(0,20),
     players:[...r.players.values()].map(x=>({id:x.id,name:x.name,ready:x.ready,characterId:x.characterId,character:x.character||x.profile?.character||null,
       alive:x.alive!==false,position:x.position,wounds:x.wounds||0,defense:runDefenseView(x),capacity:x.capacity||6,runUsage:inventoryUsage(x.runInventory||[]),
@@ -613,6 +665,7 @@ function roomView(r){
 async function api(req,res,u){
   try{
     if(req.method==='GET'&&u.pathname==='/api/health')return json(res,200,{ok:true,version:'0.8.0-character-combat-core',llm:providerReady('llm'),stt:providerReady('stt'),tts:providerReady('tts')});
+    if(req.method==='GET'&&u.pathname==='/api/voice-profiles')return json(res,200,publicVoiceCatalog());
     if(req.method==='GET'&&(u.pathname==='/api/scenarios'||u.pathname==='/api/events'))return json(res,200,currentEvents());
     if(req.method==='GET'&&u.pathname==='/api/event-catalog')return json(res,200,scenarios);
     if(req.method==='GET'&&u.pathname==='/api/crafting')return json(res,200,crafting);
@@ -652,6 +705,14 @@ async function api(req,res,u){
       const b=await body(req),p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'cannot_craft_during_run'});
       try{return json(res,200,{item:craftForProfile(p,b.recipeId,b.quantity),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
     }
+    if(req.method==='POST'&&u.pathname==='/api/profile/character-voice'){
+      const b=await body(req),p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'cannot_change_voice_during_run'});
+      const c=syncActiveCharacter(p);if(!c)return json(res,404,{error:'active_character_not_found'});
+      const profile=voiceProfile(b.voiceProfileId),mode=String(b.mode||'raw');if(!profile||profile.kind!=='player')return json(res,409,{error:'invalid_player_voice'});
+      if(!['raw','character','manual'].includes(mode))return json(res,409,{error:'invalid_voice_mode'});
+      c.voiceProfileId=profile.id;c.voiceMode=mode;saveState();return json(res,200,{character:c,profile:publicProfile(p)});
+    }
+
     if(req.method==='POST'&&u.pathname==='/api/profile/resource-upgrade'){
       const b=await body(req),p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'cannot_upgrade_resource_during_run'});
       const c=syncActiveCharacter(p);if(!c)return json(res,404,{error:'active_character_not_found'});if((Number(c.developmentPoints)||0)<1)return json(res,409,{error:'no_development_points'});
@@ -676,7 +737,7 @@ async function api(req,res,u){
       const b=await body(req),event=activeEvent(b.eventId||b.scenarioId);if(!event)return json(res,409,{error:'event_not_active'});
       const p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'already_in_active_run'});const c=p.characters.find(x=>x.id===(b.characterId||p.activeCharacterId)&&x.status==='alive')||syncActiveCharacter(p);
       const scene=createScene(event,event.opening||'');scene.music_state='lobby';
-      const r={code:code(),scenario:event,hostId:p.id,started:false,completed:false,outcome:null,turnIndex:0,progress:0,participantsAtStart:0,players:new Map(),scene,log:[],createdAt:now()};
+      const requestedGm=voiceProfile(b.gmVoiceId);const r={code:code(),scenario:event,hostId:p.id,voice:{gmVoiceId:requestedGm?.kind==='gm'?requestedGm.id:GM_VOICE_PROFILES[0].id},started:false,completed:false,outcome:null,turnIndex:0,progress:0,participantsAtStart:0,players:new Map(),scene,log:[],createdAt:now()};
       const pl={id:p.id,name:p.name,ready:false,profile:p,characterId:null,character:null,alive:false,wounds:0,nextRollBonus:0,position:spawnPosition(scene,0),capacity:6,pendingLoadout:[],runInventory:[]};
       r.players.set(p.id,pl);if(c)attachCharacterToRoom(r,p,c);rooms.set(r.code,r);
       return json(res,201,{room:roomView(r),profile:publicProfile(p),access:accessStatus(p,event)});
@@ -687,6 +748,13 @@ async function api(req,res,u){
       const b=await body(req),p=ensureProfile(b.name);if(findActiveRun(p.id))return json(res,409,{error:'already_in_active_run'});const c=p.characters.find(x=>x.id===(b.characterId||p.activeCharacterId)&&x.status==='alive')||syncActiveCharacter(p);
       const pl={id:p.id,name:p.name,ready:false,profile:p,characterId:null,character:null,alive:false,wounds:0,nextRollBonus:0,position:spawnPosition(r.scene,r.players.size),capacity:6,pendingLoadout:[],runInventory:[]};
       r.players.set(p.id,pl);if(c)attachCharacterToRoom(r,p,c);return json(res,200,{room:roomView(r),profile:publicProfile(p),access:accessStatus(p,r.scenario)});
+    }
+    const roomVoice=u.pathname.match(/^\/api\/rooms\/([^/]+)\/voice-config$/);
+    if(req.method==='POST'&&roomVoice){
+      const r=getRoom(roomVoice[1]);if(!r)return json(res,404,{error:'room_not_found'});if(r.started)return json(res,409,{error:'run_already_started'});
+      const b=await body(req),p=ensureProfile(b.name);if(r.hostId!==p.id)return json(res,403,{error:'host_only'});
+      const profile=voiceProfile(b.gmVoiceId);if(!profile||profile.kind!=='gm')return json(res,409,{error:'invalid_gm_voice'});
+      r.voice={...(r.voice||{}),gmVoiceId:profile.id};return json(res,200,roomView(r));
     }
     const roomGet=u.pathname.match(/^\/api\/rooms\/([^/]+)$/);
     if(req.method==='GET'&&roomGet){const r=getRoom(roomGet[1]);return r?json(res,200,roomView(r)):json(res,404,{error:'room_not_found'})}
@@ -736,7 +804,7 @@ async function api(req,res,u){
     if(req.method==='POST'&&combatAttack){
       const r=getRoom(combatAttack[1]);if(!r)return json(res,404,{error:'room_not_found'});if(!r.started||r.completed)return json(res,409,{error:'run_not_active'});
       const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead'});
-      try{const committed=await commitCombatTurn(r,p,String(b.action||'атакую').slice(0,1200),b);return json(res,200,{...committed,room:roomView(r),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message,pool:e.pool,current:e.current,required:e.required})}
+      try{const action=String(b.action||'атакую').slice(0,1200),committed=await commitCombatTurn(r,p,action,b),voiceEvents=buildVoiceEvents(r,p,action,committed,{});return json(res,200,{...committed,voiceEvents,room:roomView(r),profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message,pool:e.pool,current:e.current,required:e.required})}
     }
 
     const turn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/turn$/);
@@ -744,9 +812,9 @@ async function api(req,res,u){
       const r=getRoom(turn[1]);if(!r)return json(res,404,{error:'room_not_found'});if(!r.started||r.completed)return json(res,409,{error:'run_not_active'});
       const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead'});
       const action=String(b.action||'осматриваюсь').slice(0,1200);
-      if(isAttackAction(action)){try{const committed=await commitCombatTurn(r,p,action,b);return json(res,200,{...committed,room:roomView(r),profile:publicProfile(p),ai:providerReady('llm')})}catch(e){if(e.message==='insufficient_resource')return json(res,409,{error:e.message,pool:e.pool,current:e.current,required:e.required});if(e.message!=='no_hostile_target')throw e}}
+      if(isAttackAction(action)){try{const committed=await commitCombatTurn(r,p,action,b);const voiceEvents=buildVoiceEvents(r,p,action,committed,{});return json(res,200,{...committed,voiceEvents,room:roomView(r),profile:publicProfile(p),ai:providerReady('llm')})}catch(e){if(e.message==='insufficient_resource')return json(res,409,{error:e.message,pool:e.pool,current:e.current,required:e.required});if(e.message!=='no_hostile_target')throw e}}
       const proposal=await resolveGMAI(r,action,p),committed=commitTurn(r,p,action,proposal);
-      return json(res,200,{...proposal,...committed,room:roomView(r),profile:publicProfile(p),ai:providerReady('llm')});
+      const voiceEvents=buildVoiceEvents(r,p,action,committed,proposal);return json(res,200,{...proposal,...committed,voiceEvents,room:roomView(r),profile:publicProfile(p),ai:providerReady('llm')});
     }
     const voiceTurn=u.pathname.match(/^\/api\/rooms\/([^/]+)\/voice-turn$/);
     if(req.method==='POST'&&voiceTurn){
@@ -754,9 +822,9 @@ async function api(req,res,u){
       const b=await body(req),p=ensureProfile(b.name),pl=r.players.get(p.id);if(!pl||!pl.alive)return json(res,409,{error:'character_dead'});
       const action=await transcribeAudio(b.audioBase64,b.mimeType||'audio/webm');if(!action)return json(res,422,{error:'empty_transcript'});
       let proposal={},committed;if(isAttackAction(action)){try{committed=await commitCombatTurn(r,p,action,b)}catch(e){if(e.message==='insufficient_resource')return json(res,409,{error:e.message,pool:e.pool,current:e.current,required:e.required,transcript:action});if(e.message!=='no_hostile_target')throw e}}
-      if(!committed){proposal=await resolveGMAI(r,action,p);committed=commitTurn(r,p,action,proposal)}let speechBase64=null;
-      try{speechBase64=await synthesizeSpeech(committed.narration)}catch(e){console.warn('TTS fallback:',e.message)}
-      return json(res,200,{transcript:action,...proposal,...committed,room:roomView(r),profile:publicProfile(p),speechBase64,speechMime:'audio/mpeg'});
+      if(!committed){proposal=await resolveGMAI(r,action,p);committed=commitTurn(r,p,action,proposal)}
+      const voiceEvents=buildVoiceEvents(r,p,action,committed,proposal),voiceAudio=await synthesizeVoiceQueue(voiceEvents,r);
+      return json(res,200,{transcript:action,...proposal,...committed,voiceEvents,voiceAudio,room:roomView(r),profile:publicProfile(p)});
     }
 
     const claim=u.pathname.match(/^\/api\/rooms\/([^/]+)\/loot\/([^/]+)\/claim$/);
