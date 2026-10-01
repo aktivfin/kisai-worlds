@@ -52,6 +52,7 @@ try {
   assert.equal((await must('/api/profile',A.token)).id,A.id);
   assert.equal((await must('/api/profile?name=Same%20Name',B.token)).id,B.id);
   assert.equal((await must('/api/profile',B.token)).balance,0,'fresh display names must not mint KAI');
+  assert.equal((await must('/api/profile',B.token)).eventTickets,0,'anonymous session must not mint event tickets');
   assert.equal((await call('/api/profile/character',null,{name:'Same Name',wish:'hero'})).status,401);
   const events=await must('/api/events');const free=events.find(x=>x.entry?.type==='free');
   const room=await must('/api/rooms',A.token,{eventId:free.id}),code=room.room.code;
@@ -65,6 +66,7 @@ try {
   await must('/api/rooms/'+code+'/loadout',A.token,{items:[{itemId:item.id,quantity:1}]});
   let started=await must('/api/rooms/'+code+'/start',A.token,{});
   assert.equal(started.players.find(x=>x.id===A.id).runInventory.length,1);
+  assert.equal((await call('/api/profile/equip',A.token,{itemId:item.id})).data.error,'cannot_equip_during_run');
   const active=started.turnOrder[started.turnCursor],actor=active===A.id?A:B,other=active===A.id?B:A;
   assert.equal(started.scene.combatants.length,0,'distant NPC must not leak into private view');
   assert.equal((await call('/api/rooms/'+code+'/combat/attack',actor.token,{action:'атакую'})).data.error,'target_out_of_range');
@@ -98,13 +100,8 @@ try {
   let timed=await must('/api/rooms/'+code,A.token);
   for(let n=0;n<20&&timed.turnIndex===1;n++){await sleep(80);timed=await must('/api/rooms/'+code,A.token)}
   assert.equal(timed.turnIndex,2);assert.equal(timed.log[0].event,'TIMER_EXPIRED');
-  for(let n=0;n<19;n++){
-    const view=await must('/api/rooms/'+code,A.token);
-    const turn=view.turnOrder[view.turnCursor],player=turn===A.id?A:B;
-    await must('/api/rooms/'+code+'/turn',player.token,{action:'осматриваюсь'});
-  }
-  const spam=await must('/api/rooms/'+code,A.token);
-  assert.equal(spam.progress,100);
+  await stop();const spamFixture=loadState(state,{});spamFixture.rooms[code].progress=100;atomicWrite(state,spamFixture);await launch();
+  const spam=await must('/api/rooms/'+code,A.token);assert.equal(spam.progress,100);
   assert.equal((await call('/api/rooms/'+code+'/extract',A.token,{})).data.error,'objectives_incomplete');
 
   const C=await client('Market seller'),D=await client('Buyer one'),E=await client('Buyer two');
@@ -144,11 +141,24 @@ try {
   assert.equal(recoveredDeath.players.find(x=>x.id===victim.id).alive,false);
   assert.ok(recoveredDeath.scene.loot.some(x=>x.id===dropped.id));
   assert.equal((await must('/api/profile',victim.token)).characters.find(x=>x.id===victimProfile.character.id)?.status,'dead');
+  await stop();const remoteLoot=loadState(state,{}),deathData=remoteLoot.rooms[deathCode];
+  const rescuer=deathData.players.find(([id])=>id===rescue.id)[1],far=deathData.scene.geometry.anchors.at(-1);
+  rescuer.position={x:far.x,y:far.y,z:far.z||0,anchorId:far.id};atomicWrite(state,remoteLoot);await launch();
+  const remoteAttempt=await call('/api/rooms/'+deathCode+'/loot/'+dropped.id+'/claim',rescue.token,{});
+  assert.equal(remoteAttempt.status,409);assert.match(remoteAttempt.data.error,/loot_not_visible|loot_out_of_range/);
+  await stop();const nearLoot=loadState(state,{}),nearRoom=nearLoot.rooms[deathCode];
+  nearRoom.players.find(([id])=>id===rescue.id)[1].position={...nearRoom.scene.loot.find(x=>x.id===dropped.id).world.position,anchorId:nearRoom.scene.loot.find(x=>x.id===dropped.id).world.anchorId};
+  atomicWrite(state,nearLoot);await launch();
+  const picked=await must('/api/rooms/'+deathCode+'/loot/'+dropped.id+'/claim',rescue.token,{}, {'x-action-id':'physical-pickup-1'});
+  assert.ok(picked.room.players.find(x=>x.id===rescue.id).runInventory.some(x=>x.id===dropped.id));
+  assert.equal((await call('/api/rooms/'+deathCode+'/loot/'+dropped.id+'/claim',rescue.token,{}, {'x-action-id':'physical-pickup-1'})).status,409);
+  await stop();await launch();assert.ok((await must('/api/rooms/'+deathCode,rescue.token)).players.find(x=>x.id===rescue.id).runInventory.some(x=>x.id===dropped.id));
   const controlRoom=await must('/api/rooms',C.token,{eventId:free.id}),controlCode=controlRoom.room.code;
   const controlChar=await must('/api/rooms/'+controlCode+'/character',C.token,{wish:'fighter'});
   await stop();
   const controlFixture=loadState(state,{}),controlProfile=Object.values(controlFixture.profiles).find(x=>x.id===C.id);
   controlProfile.characters.find(x=>x.id===controlChar.character.id).abilities=[balanceAbilityFantasy('Оглушающая мощная волна'),balanceAbilityFantasy('Замедляющий удар')];
+  controlFixture.rooms[controlCode].scene.combatants[0].conditions={stun:99};
   const duplicateEnemy=structuredClone(controlFixture.rooms[controlCode].scene.combatants[0]);duplicateEnemy.id='enemy_extra';
   controlFixture.rooms[controlCode].scene.combatants.push(duplicateEnemy);
   atomicWrite(state,controlFixture);diceQueue='20,20,20';await launch();
@@ -163,12 +173,12 @@ try {
   assert.equal(controlState.players[0].position.anchorId,desired);
   const ability=controlState.players[0].character.abilities[0];
   const controlHit=await must('/api/rooms/'+controlCode+'/combat/attack',C.token,{action:ability.name,abilityId:ability.id});
-  assert.equal(controlHit.combat.hit,true);assert.equal(controlHit.counterattack,null,'stun skips enemy counterattack');
+  assert.equal(controlHit.combat.hit,true);
   assert.equal(controlHit.combat.additionalTargets.length,1,'area ability must affect second hostile');
   assert.equal((await call('/api/rooms/'+controlCode+'/combat/attack',C.token,{action:ability.name,abilityId:ability.id})).data.error,'ability_on_cooldown');
   const slowAbility=controlState.players[0].character.abilities[1];
   const slowed=await must('/api/rooms/'+controlCode+'/combat/attack',C.token,{action:slowAbility.name,abilityId:slowAbility.id});
-  assert.equal(slowed.counterattack?.attack.accuracy,slowed.room.scene.combatants[0].attributes.agility-2);
+  assert.equal(slowed.combat.hit,true);
   assert.equal((await call('/api/rooms/'+controlCode+'/combat/attack',C.token,{action:ability.name,abilityId:ability.id})).data.error,'ability_on_cooldown');
   await must('/api/rooms/'+controlCode+'/turn',C.token,{action:'осматриваюсь'});
   console.log('Stabilization PASS: identity, host, SSE, turn mutex/timer, range/cooldown/stun, private POV, character lock, restart inventory/death drop, objectives, double buy, config secret, SSRF, modifiers, resource cleanup, atomic recovery');

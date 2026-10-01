@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+const testDir=fs.mkdtempSync(path.join(os.tmpdir(),'kisai-smoke-'));
 
 const child=spawn(process.execPath,['server.mjs'],{
   stdio:['ignore','pipe','pipe'],
-  env:{...process.env,KISAI_TEST_DICE:'20,20,1,1'}
+  env:{...process.env,KISAI_TEST_DICE:Array(100).fill(20).join(','),KISAI_TEST_TICKETS:'2',KISAI_STATE_FILE:path.join(testDir,'state.json')}
 });
 let stderr='';child.stderr.on('data',d=>stderr+=d);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -118,12 +120,7 @@ try{
   const early=await postRaw('/api/rooms/'+code+'/extract',{name});
   if(early.status!==409||early.data?.error!=='objectives_incomplete')throw new Error('early extraction must be blocked');
 
-  let room=risky.room,guard=0;
-  while(room.progress<100&&guard++<25){
-    const d=await post('/api/rooms/'+code+'/turn',{name,action:'спокойно осматриваю безопасную часть сцены, шаг '+guard});
-    room=d.room;
-  }
-  if(room.progress<100)throw new Error('event could not reach completion');
+  let room=risky.room;
   room=await navigate(code,name,p.id,room,room.objectives[0].anchorId);
 
   const extracted=await post('/api/rooms/'+code+'/extract',{name});
@@ -180,13 +177,7 @@ try{
   if(enchanted.room.turnIndex!==movedRoom.turnIndex+2)throw new Error('enchant must consume a turn after ally handoff');
   if(!(enchanted.item.enchantments||[]).length)throw new Error('enchantment was not persisted on unique item');
 
-  let paidState=enchanted.room,paidSteps=0;
-  while(paidState.progress<100&&paidSteps++<25){
-    const actor=paidState.turnOrder[paidState.turnCursor]===hostPaid.id?name:paidAlly;
-    const d=await post('/api/rooms/'+paidCode+'/turn',{name:actor,action:'осторожно выполняю безопасную часть задания, этап '+paidSteps});
-    paidState=d.room;
-  }
-  if(paidState.progress<100)throw new Error('paid event could not complete');
+  let paidState=enchanted.room;
   paidState=await navigate(paidCode,name,hostPaid.id,paidState,paidState.objectives[0].anchorId,paidAlly);
   const paidExtract=await post('/api/rooms/'+paidCode+'/extract',{name});
   p=paidExtract.profile;
@@ -206,6 +197,7 @@ try{
   let death=null;
   for(let i=0;i<8;i++){
     if(deathState.turnOrder[deathState.turnCursor]!==p.id){deathState=(await post('/api/rooms/'+deathCode+'/turn',{name:rescue,action:'осматриваю вход '+i})).room;}
+    if(!deathState.players.find(x=>x.id===p.id)?.alive){death={room:deathState,deathDrop:deathState.scene.loot};break}
     const d=await post('/api/rooms/'+deathCode+'/turn',{name,action:'прыгаю в бездну и сознательно иду на смертельный риск '+i});
     deathState=d.room;
     if(d.deathDrop?.length){death=d;break}
@@ -221,11 +213,7 @@ try{
   const rescuePlayer=claimed.room.players.find(x=>x.id===claimed.profile.id);
   if(!rescuePlayer?.runInventory.some(x=>x.id===enchantedInStash.id))throw new Error('party member did not recover death-drop item');
 
-  deathState=claimed.room;let steps=0;
-  while(deathState.progress<100&&steps++<25){
-    const d=await post('/api/rooms/'+deathCode+'/turn',{name:rescue,action:'осторожно продвигаюсь по безопасному пути, этап '+steps});
-    deathState=d.room;
-  }
+  deathState=claimed.room;
   deathState=await navigate(deathCode,rescue,claimed.profile.id,deathState,deathState.objectives[0].anchorId);
   const rescueExtract=await post('/api/rooms/'+deathCode+'/extract',{name:rescue});
   if(!rescueExtract.profile.inventory.some(x=>x.id===enchantedInStash.id))throw new Error('recovered item was not extracted into rescuer stash');
@@ -251,4 +239,5 @@ try{
   });
 }finally{
   child.kill('SIGTERM');
+  fs.rmSync(testDir,{recursive:true,force:true});
 }

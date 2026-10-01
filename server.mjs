@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { loadState, atomicWrite } from './server/persistence.mjs';
 import { validateProviderUrl, providerFetch } from './server/provider-security.mjs';
 import { startTurns, currentPlayer, assertTurn, advanceTurn } from './server/turns.mjs';
+import {placeWorldItem,assertPickup,migrateWorldItems} from './server/world-items.mjs';
+import {initialObjectives,updateObjectives,objectivesComplete,migrateObjectives} from './server/objectives.mjs';
+import {perceive,filterVoiceEvents} from './server/perception.mjs';
+import {reactToPlayerAction} from './server/encounter.mjs';
 import { itemModifier } from './core/item-modifiers.mjs';
 import { GM_VOICE_PROFILES, PLAYER_VOICE_PROFILES, assignNpcVoiceProfile, profileForSpeaker, speechInstructions, publicVoiceCatalog, makeVoiceEvent, voiceProfile } from './core/voice.mjs';
 import { resolveAttack, resolveCheck, conditionLabel, effectiveArmor } from './core/combat.mjs';
@@ -58,13 +62,13 @@ const json = (res,status,body) => {
   const room=match&&getRoom(match[1]);
   if(status>=200&&status<300&&req?.method==='POST'){
     if(room){room.revision=(room.revision||0)+1;if(body?.room)body.room.revision=room.revision;else if(body?.code===room.code)body.revision=room.revision;}
-    if(room&&req.actionId){room.actionIds ||= [];room.actionIds.push(req.actionId);room.actionIds=room.actionIds.slice(-300);}
+    if(room&&req.actionId){room.actionReceipts ||= {};room.actionReceipts[req.actionId]={status:'committed',profileId:req.actorId,revision:room.revision,at:now()};}
     saveState();
   }
   const data=JSON.stringify(body); res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-request-id':req?.requestId||''}); res.end(data);
-  if(room&&status>=200&&status<300&&req?.method==='POST'){publishRoom(room);if(body?.voiceEvents)for(const client of subscribers.get(room.code)||[])try{client.res.write(`data: ${JSON.stringify({type:'VOICE_EVENT',revision:room.revision,actorId:room.log[0]?.profileId,voiceEvents:body.voiceEvents,voiceAudio:body.voiceAudio||[]})}\n\n`)}catch{}}
+  if(room&&status>=200&&status<300&&req?.method==='POST'){publishRoom(room);if(body?.voiceEvents)for(const client of subscribers.get(room.code)||[])try{const allowed=filterVoiceEvents(room,client.profileId,body.voiceEvents,req.actorId);client.res.write(`data: ${JSON.stringify({type:'VOICE_EVENT',revision:room.revision,actorId:req.actorId,voiceEvents:allowed,voiceAudio:(body.voiceAudio||[]).filter(x=>allowed.some(e=>e.speakerId===x.speakerId&&e.type===x.type))})}\n\n`)}catch{}}
 };
-const body = req => new Promise((resolve,reject)=>{ let raw=''; req.on('data',c=>{raw+=c;if(raw.length>15_000_000){reject(new Error('body too large'));req.destroy();}}); req.on('end',()=>{try{resolve(raw?JSON.parse(raw):{});}catch(e){reject(e);}}); req.on('error',reject); });
+const body = req => new Promise((resolve,reject)=>{ let raw=''; req.on('data',c=>{raw+=c;if(raw.length>15_000_000){reject(new Error('body too large'));req.destroy();}}); req.on('end',()=>{try{req.actionReceivedAt=Date.now();if(req.roomLockOwner){const code=req.url.match(/^\/api\/rooms\/([^/]+)/)?.[1];assertTurn(getRoom(code),req.actorId,req.actionReceivedAt)}resolve(raw?JSON.parse(raw):{});}catch(e){reject(e);}}); req.on('error',reject); });
 const saveState = () => {
   persisted.rooms = Object.fromEntries([...rooms].map(([key,room])=>[key,{...room,players:[...room.players].map(([pid,pl])=>[pid,{...pl,profile:undefined}])}]));
   writeJson(STATE_FILE, persisted);
@@ -76,6 +80,7 @@ for (const [key,data] of Object.entries(persisted.rooms)) {
     migrateProfile(profile);
     return [pid,{...pl,profile,character:profile.characters.find(c=>c.id===pl.characterId)||null}];
   }))};
+  migrateWorldItems(room.scene);migrateObjectives(room);
   rooms.set(key,room);
 }
 const TEST_DICE_QUEUE=String(process.env.KISAI_TEST_DICE||'').split(',').map(Number).filter(n=>Number.isInteger(n)&&n>=1&&n<=20);
@@ -117,10 +122,9 @@ async function resolveGMAI(room,action,actor){
   try{
     const x=safeJsonText(await openAIChat([{role:'system',content:system},{role:'user',content:user}],.55));if(!x)return fallback;
     const attributes=['strength','agility','endurance','perception','intelligence','charisma'],music=['explore','tavern','investigation','discovery','tension','chase','ritual','abyss','dread','hell','boss','grief'];
-    return{check_required:Boolean(x.check_required),check_attribute:attributes.includes(x.check_attribute)?x.check_attribute:fallback.check_attribute,check_skill:typeof x.check_skill==='string'?x.check_skill.slice(0,40):fallback.check_skill,difficulty_shift:clamp(Number(x.difficulty_shift)||0,-1,1),
-      danger:['safe','risky','lethal'].includes(x.danger)?x.danger:'safe',npc_dialogue:Array.isArray(x.npc_dialogue)?x.npc_dialogue.slice(0,3).map(v=>({speaker_id:String(v.speaker_id||'').slice(0,80),text:String(v.text||'').slice(0,260),emotion:String(v.emotion||'neutral').slice(0,32)})).filter(v=>v.text):fallback.npc_dialogue,success_narration:String(x.success_narration||fallback.success_narration).slice(0,650),
+    return{...fallback,npc_dialogue:Array.isArray(x.npc_dialogue)?x.npc_dialogue.slice(0,3).map(v=>({speaker_id:String(v.speaker_id||'').slice(0,80),text:String(v.text||'').slice(0,260),emotion:String(v.emotion||'neutral').slice(0,32)})).filter(v=>v.text):fallback.npc_dialogue,success_narration:String(x.success_narration||fallback.success_narration).slice(0,650),
       failure_narration:String(x.failure_narration||fallback.failure_narration).slice(0,650),no_check_narration:String(x.no_check_narration||fallback.no_check_narration).slice(0,650),
-      music_state:music.includes(x.music_state)?x.music_state:fallback.music_state,move_to:typeof x.move_to==='string'?x.move_to:null,loot:Boolean(x.loot)};
+      music_state:music.includes(x.music_state)?x.music_state:fallback.music_state};
   }catch(e){console.warn('GM planner fallback:',e.message);return fallback}
 }
 async function transcribeAudio(audioBase64,mimeType='audio/webm'){
@@ -157,15 +161,15 @@ async function synthesizeVoiceQueue(events,room){
 }
 
 function tryAddRunItem(r,player,item){
-  player.runInventory=player.runInventory||[];player.capacity=player.capacity||runCapacity(player.profile.character);item.status='run';item.ownerId=player.id;
+  player.runInventory=player.runInventory||[];player.capacity=player.capacity||runCapacity(player.character);item.status='run';item.ownerId=player.id;
   if(inventoryUsage(player.runInventory)+stackCost(item)<=player.capacity){player.runInventory.push(item);return'run'}
-  item.status='scene';item.ownerId=null;r.scene.loot.push(item);return'scene';
+  placeWorldItem(item,r.scene,player.position,{droppedBy:player.id});return'scene';
 }
 function dropCharacterInventory(r,p){
   const player=r.players.get(p.id);if(!player||!player.alive)return[];
   const dropped=[...(player.runInventory||[])];player.runInventory=[];
-  for(const item of dropped){item.status='scene';item.ownerId=null;item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'death_drop',characterId:player.characterId,eventId:r.scenario.id,sceneId:r.scene.id})}
-  r.scene.loot.push(...dropped);player.alive=false;player.wounds=3;
+  for(const item of dropped){item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'death_drop',characterId:player.characterId,eventId:r.scenario.id,sceneId:r.scene.id});placeWorldItem(item,r.scene,player.position,{droppedBy:player.id})}
+  player.alive=false;player.wounds=3;
   const c=p.characters.find(x=>x.id===player.characterId);if(c){c.status='dead';c.deathAt=now();c.deathEventId=r.scenario.id}
   syncActiveCharacter(p);saveState();return dropped;
 }
@@ -278,20 +282,16 @@ async function commitCombatTurn(r,p,action,{targetId=null,abilityId=null,targetA
   const skillGrowth=ability.skill?recordSkillUse(character,{name:ability.skill,attribute:ability.attackAttribute||'agility',success:combat.hit}):null;
   let narration=combatNarrativeFallback(p,target,combat),counterattack=null,deathDrop=[];
   if(combat.hit&&ability.control){target.conditions||={};const type=ability.control.type;if(['stun','slow'].includes(type))target.conditions[type]=Math.max(target.conditions[type]||0,Math.min(2,ability.control.value||1));}
-  if(!combat.killed&&target.status!=='dead'&&!(target.conditions?.stun>0)){
-    const enemyAbility=target.abilities?.[0]||balanceAbilityFantasy('Удар',target.level||1),defender=playerCombatDefender(p,player);
-    counterattack=resolveAttack({attacker:target,defender,ability:{...enemyAbility,accuracy:(enemyAbility.accuracy||0)-(target.conditions?.slow>0?2:0)},targetArea:'torso',aimed:false,attackDie:nextD20(),damageRng:max=>crypto.randomInt(1,max+1)});
-    narration+=' '+counterNarrative(target,counterattack);
-    if(defender.combat?.hp_current<=0){
-      deathDrop=dropCharacterInventory(r,p);narration+=' Персонаж больше не способен продолжать бой; его походное снаряжение остаётся в сцене.';
-    }
-  }
-  for(const key of ['stun','slow'])if(target.conditions?.[key]>0)target.conditions[key]--;
+  const reaction=reactToPlayerAction(r,{nextD20,defenderFor:pl=>playerCombatDefender(pl.profile,pl),dropInventory:dropCharacterInventory});
+  counterattack=reaction.counterattack;deathDrop=reaction.deathDrop;
+  if(counterattack)narration+=' '+counterNarrative(target,counterattack);
+  if(deathDrop.length)narration+=' Персонаж больше не способен продолжать бой; его походное снаряжение остаётся в сцене.';
   tickCooldowns(player);if(ability.cooldown>0)player.cooldowns={...(player.cooldowns||{}),[ability.id]:Math.min(5,Math.ceil(ability.cooldown))};
   const gain=combat.killed?24+(r.scenario.danger_tier||1)*4:combat.hit?8:2;r.progress=clamp((r.progress||0)+gain,0,100);
-  if(combat.killed){const objective=r.objectives?.find(x=>x.type==='defeat_threat');if(objective)objective.state='complete';}
+  updateObjectives(r);
   r.scene.narration=narration;r.scene.music_state=deathDrop.length?'grief':combat.killed?'discovery':'tension';r.scene.intensity=deathDrop.length?.95:combat.killed?.45:.82;
-  r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,action,narration,combat,counterattack});
+  r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,position:{...player.position},action,narration,combat,counterattack});
+  for(const event of reaction.events)r.log.unshift({at:now(),event:event.type,npcId:event.npcId,position:{...(r.scene.combatants.find(x=>x.id===event.npcId)?.position||{})},profileId:event.profileId,action:event.type,narration:event.type==='NPC_MOVED'?'Угроза перемещается.':'Угроза действует.',combat:event.combat});
   if(combat.hit)farm(p,action,r.scene.music_state);
   const alive=[...r.players.values()].filter(x=>x.alive);advanceTurn(r);r.turnIndex=(r.turnIndex||0)+1;
   if(!alive.length){r.completed=true;r.outcome='wipe';for(const item of r.scene.loot){item.status='lost'}r.scene.loot=[]}
@@ -313,9 +313,8 @@ function commitTurn(r,p,action,result){
     else if(result.danger==='risky'&&(r.scenario.danger_tier||1)>=3&&roll.criticalFail)woundsAdded=1;
     player.wounds=clamp((player.wounds||0)+woundsAdded,0,3);
   }
-  if(player.wounds>=3)deathDrop=dropCharacterInventory(r,p);else if(movePlayerToAnchor(r,p.id,result.move_to)){
-    const objective=r.objectives?.find(x=>x.type==='reach_anchor');if(objective&&result.move_to===objective.anchorId)objective.state='complete';
-  }
+  if(player.wounds>=3)deathDrop=dropCharacterInventory(r,p);else movePlayerToAnchor(r,p.id,result.move_to);
+  updateObjectives(r);
   const narration=roll?(roll.success?result.success_narration:result.failure_narration):result.no_check_narration;
   r.progress=clamp((r.progress||0)+(roll?(roll.success?14+(r.scenario.danger_tier||1)*2:3):6),0,100);
   const drops=[];
@@ -327,9 +326,12 @@ function commitTurn(r,p,action,result){
   }
   r.scene.narration=narration+(deathDrop.length?' Персонаж погибает, а всё взятое в поход остаётся в этой сцене.':'');
   r.scene.music_state=deathDrop.length?'grief':result.music_state||'explore';r.scene.intensity=result.danger==='lethal'?0.9:result.danger==='risky'?0.65:0.35;
-  r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,action,narration:r.scene.narration,roll});
+  r.log.unshift({at:now(),profileId:p.id,actor:p.name,characterId:player.characterId,position:{...player.position},action,narration:r.scene.narration,roll});
+  const reaction=reactToPlayerAction(r,{nextD20,defenderFor:pl=>playerCombatDefender(pl.profile,pl),dropInventory:dropCharacterInventory});
+  deathDrop.push(...reaction.deathDrop);
+  for(const event of reaction.events)r.log.unshift({at:now(),event:event.type,npcId:event.npcId,position:{...(r.scene.combatants.find(x=>x.id===event.npcId)?.position||{})},profileId:event.profileId,action:event.type,narration:event.type==='NPC_MOVED'?'Угроза перемещается.':'Угроза действует.',combat:event.combat});
   if(roll?.success&&result.danger!=='safe')farm(p,action,r.scene.music_state);
-  const alive=[...r.players.values()].filter(x=>x.alive);advanceTurn(r);r.turnIndex=(r.turnIndex||0)+1;
+  const alive=[...r.players.values()].filter(x=>x.alive);r.nextTimerType=/ловуш|капкан|пада|обвал/i.test(action)?'TRAP':result.danger==='lethal'?'CRITICAL':result.danger==='risky'?'REACTION':socialAction(action)?'DIALOGUE':r.scene.combatants.some(x=>x.status!=='dead')?'COMBAT':'EXPLORATION';advanceTurn(r);r.turnIndex=(r.turnIndex||0)+1;
   if(!alive.length){r.completed=true;r.outcome='wipe';for(const item of r.scene.loot){item.status='lost'}r.scene.loot=[]}
   saveState();return{narration:r.scene.narration,music_state:r.scene.music_state,intensity:r.scene.intensity,dice:roll,skillGrowth,wounds:player.wounds,woundsAdded,deathDrop,drops,progress:r.progress};
 }
@@ -371,7 +373,7 @@ function migrateProfile(p){
 function ensureProfile(name='Игрок') {
   const key=normalize(name)||'player';
   if(!persisted.profiles[key]){
-    persisted.profiles[key]={id:crypto.randomUUID(),name:String(name).trim()||'Игрок',balance:0,farmToday:0,farmDay:new Date().toISOString().slice(0,10),inventory:starterInventory(),equipped:{weapon:null,armor:null,charm:null,tool:null},recentActions:[],characterSlots:3,characters:[],activeCharacterId:null,eventTickets:2,subscription:{active:false,expiresAt:null}};
+    persisted.profiles[key]={id:crypto.randomUUID(),name:String(name).trim()||'Игрок',balance:0,farmToday:0,farmDay:new Date().toISOString().slice(0,10),inventory:starterInventory(),equipped:{weapon:null,armor:null,charm:null,tool:null},recentActions:[],characterSlots:3,characters:[],activeCharacterId:null,eventTickets:process.env.KISAI_TEST_DICE&&process.env.KISAI_TEST_TICKETS&&process.env.KISAI_STATE_FILE?Number(process.env.KISAI_TEST_TICKETS):0,subscription:{active:false,expiresAt:null}};
     saveState();
   }
   const p=migrateProfile(persisted.profiles[key]),day=new Date().toISOString().slice(0,10);
@@ -670,14 +672,12 @@ function movePlayerToAnchor(room,profileId,anchorId){
   player.position={x:a.x,y:a.y,z:a.z||0,eyeHeight:player.position?.eyeHeight||1.7,anchorId:a.id};return true;
 }
 function personalPOV(room,profileId){
-  const player=room.players.get(profileId);if(!player)return null;
-  const pos=player.position||spawnPosition(room.scene,0),radius=room.scene.geometry?.visibilityRadius||15;
-  const visible=(room.scene.geometry?.anchors||[]).filter(a=>Math.hypot((a.x||0)-pos.x,(a.y||0)-pos.y)<=radius);
-  return {sceneId:room.scene.id,canonicalTitle:room.scene.title,camera:{x:pos.x,y:pos.y,z:(pos.z||0)+pos.eyeHeight,eyeHeight:pos.eyeHeight,anchorId:pos.anchorId},visibleAnchors:visible,hiddenAnchorCount:Math.max(0,(room.scene.geometry?.anchors?.length||0)-visible.length),narration:room.scene.narration,music_state:room.scene.music_state};
+  const view=perceive(room,profileId);
+  return {sceneId:room.scene.id,canonicalTitle:room.scene.title,camera:view.camera,visibleAnchors:view.visibleAnchors,hiddenAnchorCount:view.hiddenAnchorCount,narration:view.narration,music_state:room.scene.music_state};
 }
 
 function finishRun(r){
-  if(r.completed)throw new Error('run_completed');if((r.progress||0)<100||!r.objectives?.filter(x=>x.required).every(x=>x.state==='complete'))throw new Error('objectives_incomplete');
+  if(r.completed)throw new Error('run_completed');if(!objectivesComplete(r))throw new Error('objectives_incomplete');
   const alive=[...r.players.values()].filter(x=>x.alive);if(!alive.length)throw new Error('party_wiped');
   const participants=Math.max(1,r.participantsAtStart||r.players.size),underfill=clamp((r.scenario.recommended_players||1)/participants,1,2.5),rewards=[];
   for(const pl of alive){
@@ -691,7 +691,7 @@ function finishRun(r){
     persisted.transactions.unshift({id:id('tx'),at:now(),profileId:p.id,type:'event_complete',amount:0,eventId:r.scenario.id,xp,underfill});
     rewards.push({profileId:p.id,characterId:c.id,xp,levels,underfill,unique});
   }
-  for(const item of r.scene.loot||[]){item.status='lost';item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'left_behind',eventId:r.scenario.id})}
+  for(const item of r.scene.loot||[]){item.status='lost';if(item.world)item.world.state='lost';item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'left_behind',eventId:r.scenario.id})}
   r.scene.loot=[];r.completed=true;r.outcome='success';r.completedAt=now();saveState();return rewards;
 }
 function useRunItem(r,player,itemId){
@@ -713,14 +713,12 @@ function runDefenseView(player){
 }
 function roomView(r,profileId){
   if(!r.players.has(profileId))throw new Error('player_not_in_room');
-  const pov=personalPOV(r,profileId),visible=new Set(pov.visibleAnchors.map(a=>a.id));
-  const scene={...r.scene,geometry:{...r.scene.geometry,anchors:pov.visibleAnchors},
-    combatants:(r.scene.combatants||[]).filter(c=>!c.hidden&&(!c.position||Math.hypot(c.position.x-pov.camera.x,c.position.y-pov.camera.y)<=(r.scene.geometry?.visibilityRadius||15))),
-    loot:(r.scene.loot||[]).filter(item=>!item.hidden&&(!item.anchorId||visible.has(item.anchorId)))};
+  const view=perceive(r,profileId);
+  const scene={...r.scene,narration:view.narration,geometry:{visibilityRadius:r.scene.geometry?.visibilityRadius,anchors:view.visibleAnchors},combatants:view.visibleNpc,loot:view.visibleLoot};
   return {code:r.code,scenario:r.scenario,event:r.scenario,hostId:r.hostId,voice:r.voice||{gmVoiceId:GM_VOICE_PROFILES[0].id},started:r.started,completed:Boolean(r.completed),outcome:r.outcome||null,
-    turnIndex:r.turnIndex,turnOrder:r.turnOrder||[],turnCursor:r.turnCursor||0,round:r.round||1,timer:r.timer||null,revision:r.revision||0,progress:r.progress||0,objectives:r.objectives||[],participantsAtStart:r.participantsAtStart||0,scene,log:(r.log||[]).slice(0,20),
+    turnIndex:r.turnIndex,turnOrder:r.turnOrder||[],turnCursor:r.turnCursor||0,round:r.round||1,timer:r.timer||null,revision:r.revision||0,progress:r.progress||0,objectives:r.objectives||[],participantsAtStart:r.participantsAtStart||0,scene,log:view.knownLog,
     players:[...r.players.values()].map(x=>({id:x.id,name:x.name,ready:x.ready,characterId:x.characterId,character:x.character||x.profile?.character||null,
-      alive:x.alive!==false,position:x.position,wounds:x.wounds||0,defense:runDefenseView(x),capacity:x.capacity||6,runUsage:inventoryUsage(x.runInventory||[]),
+      alive:x.alive!==false,position:x.id===profileId||Math.hypot((x.position?.x||0)-view.camera.x,(x.position?.y||0)-view.camera.y)<=(r.scene.geometry?.visibilityRadius||15)?x.position:null,wounds:x.wounds||0,defense:runDefenseView(x),capacity:x.capacity||6,runUsage:inventoryUsage(x.runInventory||[]),
       runInventory:x.id===profileId?x.runInventory||[]:[],pendingLoadout:x.id===profileId?x.pendingLoadout||[]:[]}))};
 }
 
@@ -807,11 +805,11 @@ async function api(req,res,u){
       try{const ability=evolveAbilityDefinition(c,{abilityId:b.abilityId,idea:b.idea,mode:b.mode==='new'?'new':'modify'});c.developmentPoints--;saveState();return json(res,200,{ability,character:c,profile:publicProfile(p)})}catch(e){return json(res,409,{error:e.message})}
     }
     if(req.method==='POST'&&u.pathname==='/api/profile/equip'){
-      const b=await body(req),p=sessionProfile(req),item=p.inventory.find(x=>x.id===b.itemId&&x.kind==='equipment');if(!item)return json(res,404,{error:'equipment_not_found'});
+      const b=await body(req),p=sessionProfile(req);if(findActiveRun(p.id))return json(res,409,{error:'cannot_equip_during_run'});const item=p.inventory.find(x=>x.id===b.itemId&&x.kind==='equipment');if(!item)return json(res,404,{error:'equipment_not_found'});
       p.equipped=p.equipped||{weapon:null,armor:null,charm:null,tool:null};p.equipped[item.slot]=item.id;saveState();return json(res,200,publicProfile(p));
     }
     if(req.method==='POST'&&u.pathname==='/api/profile/unequip'){
-      const b=await body(req),p=sessionProfile(req),slot=String(b.slot||'');if(!['weapon','armor','charm','tool'].includes(slot))return json(res,409,{error:'invalid_slot'});
+      const b=await body(req),p=sessionProfile(req);if(findActiveRun(p.id))return json(res,409,{error:'cannot_equip_during_run'});const slot=String(b.slot||'');if(!['weapon','armor','charm','tool'].includes(slot))return json(res,409,{error:'invalid_slot'});
       p.equipped=p.equipped||{weapon:null,armor:null,charm:null,tool:null};p.equipped[slot]=null;saveState();return json(res,200,publicProfile(p));
     }
 
@@ -884,7 +882,7 @@ async function api(req,res,u){
       }
       r.started=true;r.participantsAtStart=players.length;r.startedAt=now();r.scene.music_state='explore';
       const destination=r.scene.geometry.anchors.at(-1);
-      r.objectives=[{id:'reach_destination',type:'reach_anchor',anchorId:destination.id,state:'pending',required:true},{id:'defeat_threat',type:'defeat_threat',state:'pending',required:false}];
+      r.objectives=initialObjectives(r.scene);
       startTurns(r);saveState();return json(res,200,roomView(r,sessionProfile(req).id));
     }
 
@@ -917,11 +915,14 @@ async function api(req,res,u){
 
     const claim=u.pathname.match(/^\/api\/rooms\/([^/]+)\/loot\/([^/]+)\/claim$/);
     if(req.method==='POST'&&claim){
-      const r=getRoom(claim[1]);if(!r)return json(res,404,{error:'room_not_found'});const b=await body(req),p=sessionProfile(req),pl=r.players.get(p.id);
+      const r=getRoom(claim[1]);if(!r)return json(res,404,{error:'room_not_found'});if(!r.started||r.completed)return json(res,409,{error:'run_not_active'});const p=sessionProfile(req),pl=r.players.get(p.id);
       if(!pl||!pl.alive)return json(res,409,{error:'character_dead'});
       const idx=(r.scene.loot||[]).findIndex(x=>x.id===claim[2]&&x.status==='scene');if(idx<0)return json(res,404,{error:'loot_not_found'});const item=r.scene.loot[idx];
-      if(inventoryUsage(pl.runInventory)+stackCost(item)>pl.capacity)return json(res,409,{error:'run_inventory_full',usage:inventoryUsage(pl.runInventory),capacity:pl.capacity});
-      r.scene.loot.splice(idx,1);item.status='run';item.ownerId=p.id;item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'claimed_in_event',eventId:r.scenario.id,characterId:pl.characterId});pl.runInventory.push(item);saveState();
+      try{assertPickup(item,r.scene,pl,inventoryUsage(pl.runInventory),stackCost(item))}catch(e){return json(res,409,{error:e.message})}
+      r.scene.loot.splice(idx,1);item.status='run';item.ownerId=p.id;item.world.state='claimed';item.world.ownerId=p.id;item.provenance=item.provenance||[];item.provenance.push({at:now(),type:'claimed_in_event',eventId:r.scenario.id,characterId:pl.characterId});pl.runInventory.push(item);
+      r.log.unshift({at:now(),event:'LOOT_CLAIMED',profileId:p.id,itemId:item.id,actor:p.name,action:'pickup',narration:p.name+' подбирает '+item.name+'.'});
+      reactToPlayerAction(r,{nextD20,defenderFor:player=>playerCombatDefender(player.profile,player),dropInventory:dropCharacterInventory});
+      advanceTurn(r);r.turnIndex=(r.turnIndex||0)+1;saveState();
       return json(res,200,{item,room:roomView(r,sessionProfile(req).id),profile:publicProfile(p)});
     }
     const use=u.pathname.match(/^\/api\/rooms\/([^/]+)\/use-item$/);
@@ -959,7 +960,7 @@ async function api(req,res,u){
     }
 
     return json(res,404,{error:'not_found'});
-  }catch(e){const safe=['invalid_provider_url','private_provider_url'].includes(e.message);console.error(JSON.stringify({event:'api_error',requestId:req.requestId,path:u.pathname,code:e.message}));return json(res,e.status||(safe?422:500),{error:e.status||safe?e.message:'server_error'})}
+  }catch(e){const safe=['invalid_provider_url','private_provider_url'].includes(e.message),status=e.status||(e.message==='turn_expired'?409:safe?422:500);console.error(JSON.stringify({event:'api_error',requestId:req.requestId,path:u.pathname,code:e.message}));return json(res,status,{error:status<500?e.message:'server_error'})}
 }
 function staticFile(req,res,u){
   let rel;try{rel=decodeURIComponent(u.pathname==='/'?'/index.html':u.pathname)}catch{res.writeHead(400);return res.end('Bad path')}
@@ -979,14 +980,17 @@ const server=http.createServer((req,res)=>{
   });
   const u=new URL(req.url,'http://localhost');
   if(u.pathname.startsWith('/api/')) {
-    const action=u.pathname.match(/^\/api\/rooms\/([^/]+)\/(turn|voice-turn|combat\/attack|use-item|enchant)$/);
+    const action=u.pathname.match(/^\/api\/rooms\/([^/]+)\/(turn|voice-turn|combat\/attack|use-item|enchant|loot\/[^/]+\/claim)$/);
     if(req.method==='POST'&&action){
       const r=getRoom(action[1]);if(!r)return json(res,404,{error:'room_not_found'});
       let p;try{p=sessionProfile(req);assertTurn(r,p.id);}catch(e){return json(res,e.message==='unauthorized'?401:409,{error:e.message})}
       if(busyRooms.has(r.code))return json(res,409,{error:'action_in_progress'});
-      const actionId=String(req.headers['x-action-id']||'');
-      if(actionId&&r.actionIds?.includes(actionId))return json(res,409,{error:'duplicate_action'});
-      req.actionId=actionId||null;req.roomLockOwner=true;busyRooms.add(r.code);
+      const actionId=String(req.headers['x-action-id']||crypto.randomUUID());
+      if(!/^[a-zA-Z0-9_-]{8,100}$/.test(actionId))return json(res,422,{error:'invalid_action_id'});
+      r.actionReceipts ||= {};
+      if(r.actionReceipts[actionId]||r.actionIds?.includes(actionId))return json(res,409,{error:'duplicate_action'});
+      req.actionId=actionId;req.actorId=p.id;req.roomLockOwner=true;busyRooms.add(r.code);
+      r.actionReceipts[actionId]={status:'accepted',profileId:p.id,at:now()};saveState();
       api(req,res,u).finally(()=>busyRooms.delete(r.code));return;
     }
     return api(req,res,u);

@@ -52,8 +52,10 @@ try {
   assert.equal(restored.turnIndex,1);
   await stop();
   const fixture=loadState(state,{}),room=fixture.rooms[code];
-  room.scene.loot.push({id:'browser_loot_fixture',serial:'KW-BROWSER-FIXTURE',name:'Test Relic',kind:'equipment',slot:'charm',rarity:'rare',status:'scene',stackable:false,slotCost:1,provenance:[{type:'test_fixture'}]});
-  room.progress=100;for(const objective of room.objectives)objective.state='complete';atomicWrite(state,fixture);
+  const guestId=room.players.find(([,p])=>p.name==='Browser Guest')[0],guestPlayer=room.players.find(([id])=>id===guestId)[1];
+  room.turnCursor=room.turnOrder.indexOf(guestId);room.timer={timerType:'COMBAT',playerId:guestId,startedAt:Date.now(),deadlineAt:Date.now()+60000};
+  room.scene.loot.push({id:'browser_loot_fixture',serial:'KW-BROWSER-FIXTURE',name:'Test Relic',kind:'equipment',slot:'charm',rarity:'rare',status:'scene',stackable:false,slotCost:1,provenance:[{type:'test_fixture'}],world:{id:'world_browser_loot_fixture',itemInstanceId:'browser_loot_fixture',sceneId:room.scene.id,position:{x:guestPlayer.position.x,y:guestPlayer.position.y,z:guestPlayer.position.z||0},anchorId:guestPlayer.position.anchorId,claimRadius:2,droppedBy:null,droppedAt:null,ownerId:null,state:'available',visibility:'public'}});
+  room.progress=100;for(const objective of room.objectives)objective.state='COMPLETED';atomicWrite(state,fixture);
   await launch();await B.reload();await B.locator('#game.screen.active').waitFor();
   await A.locator('.sceneLootItem[data-id="browser_loot_fixture"]').waitFor({timeout:10000});
   await B.locator('.sceneLootItem[data-id="browser_loot_fixture"]').click();
