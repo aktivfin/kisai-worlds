@@ -28,6 +28,6 @@ export function filterVoiceEvents(room,profileId,events=[],actorId=null) {
   const view=perceive(room,profileId),npcIds=new Set(view.visibleNpc.map(n=>n.id));
   const actor=room.players.get(actorId),recipient=room.players.get(profileId);
   const audible=!actor||actorId===profileId||Math.hypot((actor.position?.x||0)-(recipient.position?.x||0),(actor.position?.y||0)-(recipient.position?.y||0))<=(room.scene.geometry?.visibilityRadius||15);
-  return events.filter(e=>e.speakerType==='TIMER'||((e.speakerType!=='NPC'||npcIds.has(e.speakerId))&&(e.speakerType!=='GM'&&e.speakerType!=='PLAYER'||audible)))
+  return events.filter(e=>e.speakerType==='TIMER'||((e.speakerType!=='NPC'||npcIds.has(e.speakerId))&&(['GM','PLAYER','SYSTEM'].includes(e.speakerType)?audible:true)))
     .filter(e=>!e.recipientId||e.recipientId===profileId);
 }

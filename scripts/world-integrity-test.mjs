@@ -22,7 +22,7 @@ const hiddenNpc={id:'hidden',hidden:true,status:'alive',position:{x:0,y:0,z:0}};
 scene.combatants.push(hiddenNpc);
 const pa=perceive(room,'a');assert.equal(pa.visibleLoot.length,0);assert.equal(pa.visibleNpc.length,0);
 assert.equal(pa.knownLog.length,0);assert.equal(pa.visibleAnchors.some(x=>x.id==='exit'),false);
-assert.deepEqual(filterVoiceEvents(room,'a',[{speakerType:'NPC',speakerId:'hidden',text:'secret'},{speakerType:'GM',text:'private'},{speakerType:'TIMER',text:'tick'}],'b').map(x=>x.speakerType),['TIMER']);
+assert.deepEqual(filterVoiceEvents(room,'a',[{speakerType:'NPC',speakerId:'hidden',text:'secret'},{speakerType:'GM',text:'private'},{speakerType:'SYSTEM',text:'private_roll'},{speakerType:'TIMER',text:'tick'}],'b').map(x=>x.speakerType),['TIMER']);
 room.objectives=initialObjectives(scene);room.progress=100;
 assert.equal(objectivesComplete(room),false,'UI progress cannot finish objective graph');
 updateObjectives(room);assert.equal(objectivesComplete(room),true,'physical reach completes required objective');
