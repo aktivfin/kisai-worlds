@@ -4,9 +4,12 @@ export function startTurns(room,now=Date.now()) {
   setTurnTimer(room,now);
 }
 export function currentPlayer(room) { return room.turnOrder?.[room.turnCursor]||null; }
+export const TIMER_POLICY={EXPLORATION:null,DIALOGUE:45000,COMBAT:60000,REACTION:12000,TRAP:8000,CRITICAL:7000};
 export function setTurnTimer(room,now=Date.now()) {
   const playerId=currentPlayer(room);
-  room.timer=playerId?{timerType:'combat',playerId,startedAt:now,deadlineAt:now+60000}:null;
+  const type=room.nextTimerType||'COMBAT';room.nextTimerType=null;
+  const duration=TIMER_POLICY[type];
+  room.timer=playerId&&duration?{timerType:type,playerId,startedAt:now,deadlineAt:now+duration}:null;
 }
 export function assertTurn(room,actorId,now=Date.now()) {
   if(currentPlayer(room)!==actorId)throw new Error('not_your_turn');

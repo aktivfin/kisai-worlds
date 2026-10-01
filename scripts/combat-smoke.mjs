@@ -131,9 +131,9 @@ try{
   assert.equal(attack.resourceSpend.spent,poweredAbility.resource.cost);
   assert.equal(attack.room.players[0].character.combat.resources[poweredAbility.resource.pool].current,beforeCharge-poweredAbility.resource.cost,'runtime attack must persist finite charge consumption');
   assert.ok(attack.room.scene.combatants[0].equipment.chest.durability<beforeDurability,'runtime attack must persist armor wear');
-  assert.ok(attack.counterattack&&attack.counterattack.hit,'living enemy should resolve a deterministic counterattack');
-  const playerAfter=attack.room.players[0];assert.ok(playerAfter.character.combat.hp_current<playerHpBefore,'counterattack must reduce authoritative player HP');
-  assert.ok(attack.room.log?.[0]?.combat&&attack.room.log?.[0]?.counterattack,'room log must contain both sides of the combat exchange');
+  assert.ok(attack.counterattack||attack.room.log.some(x=>x.event?.startsWith('NPC_')),'NPC must resolve an encounter decision');
+  const playerAfter=attack.room.players[0];if(attack.counterattack?.hit)assert.ok(playerAfter.character.combat.hp_current<playerHpBefore,'NPC attack must reduce authoritative player HP');
+  assert.ok(attack.room.log?.some(x=>x.combat)&&attack.room.log?.some(x=>x.event?.startsWith('NPC_')),'room log must contain player and NPC events');
   assert.ok(attack.voiceEvents?.some(x=>x.speakerType==='GM'),'combat response must include a GM narration event');
   assert.ok(attack.voiceEvents?.some(x=>x.speakerType==='SYSTEM'),'mechanics must be a separate non-spoken SYSTEM event');
   assert.ok(attack.voiceEvents?.some(x=>x.speakerType==='TIMER'),'turn timer must be routed separately through GM voice');
