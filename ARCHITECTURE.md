@@ -11,7 +11,7 @@ KisAI Worlds is currently a Windows/LAN vertical slice built around a local Node
 - **World Simulator** — HP, injuries, equipment durability/defects, hostile combatants, canonical scene state and item/world mutations.
 - **Narrative Engine** — receives already committed mechanics and renders narration without changing outcomes.
 - **World/GM runtime** — scene progression, movement anchors, loot relevance and music-state selection.
-- **Voice runtime** — microphone capture, real-player voice relay, STT, GM response and TTS.
+- **Voice runtime** — microphone/STT input, explicit Dialogue Director events, Voice Router, separate GM/NPC/player voice profiles and routed TTS. GM never acts NPC dialogue. SYSTEM mechanics never enter TTS.
 - **Media runtime** — optional image generation for key scenes.
 - **Audio director** — context-driven adaptive soundtrack with crossfades and speech ducking.
 - **Economy runtime** — KAI off-chain ledger, inventory, equipment, unique-item provenance and secondary market.
@@ -29,3 +29,19 @@ The next production layers are a desktop shell/engine build, persistent accounts
 ## Resource authority
 
 Ability resource use is deterministic server state. AbilityDefinitions may reference a named resource pool and cost. The server validates and spends charges before resolving d20, persists the remaining pool, refills configured expedition resources when a new run starts, and owns capacity upgrades. The LLM may describe the fantasy of the resource but cannot add charges, waive costs or refill it.
+
+
+## Speech/event separation
+
+Turn output is structurally separated before audio rendering.
+
+Speaker classes:
+- GM
+- TIMER (uses GM profile)
+- PLAYER
+- NPC
+- SYSTEM
+
+Only speakable classes may reach TTS. SYSTEM carries mechanics/state for UI.
+
+Dialogue Director decides ordering and speaker identity. Voice Router chooses the corresponding stable profile. This keeps narrative authority separate from acting/performance and prevents the GM voice from becoming an actor for the whole world.
