@@ -5,7 +5,7 @@ KisAI Worlds is currently a Windows/LAN vertical slice built around a local Node
 ## Runtime layers
 
 - **Party runtime** — rooms, players, turn order, ready state.
-- **Character runtime** — classless CharacterState with six attributes, dynamic skills, injuries, development points and server-balanced AbilityDefinitions.
+- **Character runtime** — classless CharacterState with six attributes, dynamic skills, injuries, development points, finite named resource pools and server-balanced AbilityDefinitions.
 - **Intent Interpreter** — LLM/fallback maps free-form player language to semantic intent; it never owns final numeric results.
 - **Rules Engine** — deterministic checks, hit/evasion, damage, armor absorption, ability budgets and server dice.
 - **World Simulator** — HP, injuries, equipment durability/defects, hostile combatants, canonical scene state and item/world mutations.
@@ -24,3 +24,8 @@ LLMs are used for interpretation, naming, lore, narration and creative item/scen
 ## Target evolution
 
 The next production layers are a desktop shell/engine build, persistent accounts/storage, Steam networking or WebRTC voice, authoritative world state, personal POV scene rendering and hardened marketplace/economy services.
+
+
+## Resource authority
+
+Ability resource use is deterministic server state. AbilityDefinitions may reference a named resource pool and cost. The server validates and spends charges before resolving d20, persists the remaining pool, refills configured expedition resources when a new run starts, and owns capacity upgrades. The LLM may describe the fantasy of the resource but cannot add charges, waive costs or refill it.
