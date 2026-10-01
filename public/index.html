@@ -13,10 +13,10 @@
   <header class="topbar">
     <button id="brandBtn" class="brand ghostish" aria-label="На главную">
       <span class="sigil">K</span>
-      <span class="brandText"><b>KisAI Worlds</b><small>AI PARTY RPG // DEMO 0.4</small></span>
+      <span class="brandText"><b>KisAI Worlds</b><small>AI EXTRACTION RPG // 0.8</small></span>
     </button>
     <nav class="mainNav" aria-label="Основные разделы">
-      <button class="navBtn active" data-nav="home">Игра</button>
+      <button class="navBtn active" data-nav="home">Главная</button><button class="navBtn" data-nav="setup">Карта</button>
       <button class="navBtn" data-econ="hero">Герой</button>
       <button class="navBtn" data-econ="inventory">Инвентарь</button>
       <button class="navBtn" data-econ="market">Рынок</button>
@@ -28,33 +28,57 @@
       <div id="musicNow" class="musicNow" title="Adaptive soundtrack"><span>♫</span><div><small>ADAPTIVE SCORE</small><b id="musicTitle">ожидание</b></div></div><button id="settingsBtn" class="iconBtn">⚙ <span>AI</span></button>
     </div>
   </header>
+  <div id="globalStatus" class="globalStatus hidden" role="status" aria-live="polite"></div>
   <main>
     <section id="home" class="screen active homeScreen">
-      <div class="homeBackdrop"></div><div class="homeShade"></div>
-      <div class="homeContent">
-        <p class="eyebrow">VOICE-FIRST MULTIPLAYER ROLEPLAYING</p>
-        <h1>KisAI<br><span>Worlds</span></h1>
-        <p class="lead">Живые голоса друзей. AI-гейммастер. Персональное восприятие сцены. Герои, которые растут вместе с путешествиями.</p>
-        <div class="menuStack">
-          <button id="hostBtn" class="menuBtn primaryMenu"><span>✦</span><b>Новая игра</b><small>Создать комнату и выбрать историю</small></button>
-          <button id="joinBtn" class="menuBtn"><span>◉</span><b>Присоединиться</b><small>Войти по коду комнаты</small></button>
-          <button id="economyBtn" class="menuBtn"><span>◈</span><b>Арсенал и рынок</b><small>Экипировка, редкости, торговля и KAI</small></button>
-          <button id="demoTourBtn" class="menuBtn"><span>◇</span><b>Как это работает</b><small>Короткий обзор игрового цикла</small></button>
+      <div class="homeBackdrop homeBackdropA visible"></div><div class="homeBackdrop homeBackdropB"></div><div class="homeShade"></div>
+      <div class="homeShell">
+        <div class="homeContent">
+          <p class="eyebrow">VOICE-FIRST MULTIPLAYER ROLEPLAYING</p>
+          <h1>KisAI<br><span>Worlds</span></h1>
+          <p class="lead">Общие ходы друзей в реальном времени. AI-гейммастер. Персональное восприятие сцены. Герои и уникальные вещи, которые рождаются из путешествия.</p>
+          <div class="menuStack">
+            <button id="hostBtn" class="menuBtn primaryMenu" data-cover="assets/menu_world.jpg" data-cover-pos="center 38%"><span>✦</span><b>Карта событий</b><small>3–9 активных приключений с фиксированной сложностью</small></button>
+            <button id="joinBtn" class="menuBtn" data-cover="assets/lobby_tavern.jpg" data-cover-pos="center 52%"><span>◉</span><b>Присоединиться</b><small>Войти по коду комнаты</small></button>
+            <button id="economyBtn" class="menuBtn" data-cover="assets/character_creator.jpg" data-cover-pos="62% 34%"><span>◈</span><b>Арсенал и рынок</b><small>Экипировка, редкости, торговля и KAI</small></button>
+            <button id="demoTourBtn" class="menuBtn" data-cover="assets/game_harbor.jpg" data-cover-pos="center 45%"><span>◇</span><b>Как это работает</b><small>Игровой цикл, голос и AI-сцены</small></button>
+            <button id="installBtn" class="menuBtn" data-cover="assets/menu_world.jpg" data-cover-pos="center 38%"><span>⌘</span><b>Установка</b><small>Windows и Linux</small></button>
+          </div>
+          <div class="platformTags glass"><span>Windows</span><span>Linux</span><span>LAN lobby</span><span>AI providers</span></div>
         </div>
+        <aside class="homeWorldCard glass">
+          <div class="worldCardArt"><img src="assets/lobby_tavern.jpg" alt="Таверна — лобби партии"></div>
+          <div class="worldCardCopy"><p class="eyebrow">ЖИВАЯ ПАРТИЯ</p><h3>Один мир — разные взгляды</h3><p>Общий канон сцены остаётся единым, а голос, информация и будущий POV каждого героя зависят от его положения и восприятия.</p><div class="worldCardTags"><span>AI GM</span><span>Voice</span><span>Unique loot</span><span>Adaptive score</span></div></div>
+        </aside>
       </div>
-      <div class="homeInfo glass">
-        <div><span class="dot live"></span> AI GM</div><div><span class="dot live"></span> VOICE TURN</div><div><span class="dot"></span> CINEMATIC FRAME</div>
-      </div>
+      <div class="homeInfo glass"><div><span class="dot live"></span> AI GM</div><div><span class="dot live"></span> VOICE TURN</div><div><span class="dot"></span> CINEMATIC FRAME</div><div><span class="dot"></span> WINDOWS / LINUX</div></div>
     </section>
+
     <section id="setup" class="screen setupScreen">
-      <div class="sectionHead"><button class="back iconBtn">←</button><div><p class="eyebrow">НОВАЯ ИГРА</p><h2>Выбери историю</h2></div><div class="stepPill">01 / 03</div></div>
-      <div id="scenarioGrid" class="scenarioGrid"></div>
-      <div class="setupBottom glass"><label><span>Имя игрока</span><input id="playerName" placeholder="Например, Артём" maxlength="24"></label><button id="createRoom" class="goldBtn">Создать лобби <span>→</span></button></div>
+      <div class="sectionHead"><button class="back iconBtn">←</button><div><p class="eyebrow">КАРТА МИРА · РОТАЦИЯ СОБЫТИЙ</p><h2>Выбери приключение</h2></div><div class="stepPill">01 / 03</div></div>
+      <div class="eventRules glass"><span>Сложность события фиксирована</span><span>1–5 игроков</span><span>Меньше группа → выше риск и награда</span><span>Permadeath</span></div>
+      <div class="worldMapShell">
+        <div class="eventMapStage glass">
+          <div class="eventMapBackdrop"></div>
+          <div class="mapOrbit mapOrbitA"></div><div class="mapOrbit mapOrbitB"></div><div class="mapOrbit mapOrbitC"></div>
+          <div class="eventMapHeader">
+            <div><small>АКТИВНЫЕ ЭКСПЕДИЦИИ</small><b><span id="activeEventCount">0</span> событий в ротации</b></div>
+            <div class="rotationClock"><small>РОТАЦИЯ ЧЕРЕЗ</small><b id="eventRotationTime">--:--:--</b></div>
+          </div>
+          <div id="eventMapNodes" class="eventMapNodes" aria-label="Карта активных событий"></div>
+          <div class="eventLegend"><span><i class="legendDot recon"></i>Разведка</span><span><i class="legendDot loot"></i>Добыча</span><span><i class="legendDot boss"></i>Босс</span><span><i class="legendDot anomaly"></i>Аномалия</span></div>
+        </div>
+        <aside id="eventDetailPanel" class="eventDetailPanel glass"></aside>
+      </div>
+      <div id="scenarioGrid" class="scenarioGrid eventCardRail"></div>
+      <div class="setupBottom glass"><label><span>Имя игрока</span><input id="playerName" placeholder="Например, Артём" maxlength="24"></label><label><span>Персонаж</span><select id="eventCharacterSelect"><option value="">Создать нового в лобби</option></select></label><div id="eventAccess" class="eventAccess"></div><button id="createRoom" class="goldBtn">Создать лобби <span>→</span></button></div>
     </section>
+
     <section id="join" class="screen joinScreen">
       <div class="joinBackdrop"></div>
       <div class="joinCard glass"><button class="back iconBtn floatingBack">←</button><p class="eyebrow">ПОДКЛЮЧЕНИЕ К ПАРТИИ</p><h2>Войти в лобби</h2><p class="muted">Попроси хоста прислать шестизначный код комнаты.</p><label>Твоё имя<input id="joinName" placeholder="Имя игрока" maxlength="24"></label><label>Код комнаты<input id="roomCode" class="roomCodeInput" placeholder="A1B2C3" maxlength="6"></label><button id="joinRoom" class="goldBtn wide">Войти в игру</button></div>
     </section>
+
     <section id="lobby" class="screen lobbyScreen">
       <div class="lobbyBackdrop"></div><div class="lobbyShade"></div>
       <div class="lobbyHeader">
@@ -65,36 +89,38 @@
         <div class="partyColumn">
           <div class="glass panelHead"><span>Игроки</span><small id="playerCount">1 / 5</small></div>
           <div id="players" class="playerCards"></div>
-          <div class="voiceCheck glass"><div class="micPulse">🎙</div><div><b>Голосовая партия</b><p>Живой голос игрока слышат остальные; AI параллельно превращает речь в действие.</p></div><span class="statusOk">ГОТОВО</span></div>
+          <div class="voiceCheck glass"><div class="micPulse">🎙</div><div class="voiceLobbyCopy"><b>Голосовая архитектура</b><p>GM озвучивает только мир и систему. NPC говорят собственными голосами.</p><label class="gmVoicePicker">Голос GM<select id="gmVoiceSelect"></select></label></div><span class="statusOk">VOICE ROUTER</span></div>
         </div>
         <div class="characterPanel glass">
           <div class="charPanelVisual"><div class="charVisualShade"></div><div class="charVisualText"><p class="eyebrow">ТВОЙ ГЕРОЙ</p><h3>Опиши кого хочешь играть</h3><p>Нейронка сохранит фантазию персонажа, но адаптирует реальную силу под текущий уровень.</p></div></div>
-          <div class="charBuilder">
+          <div class="charBuilder"><div id="characterRosterLobby" class="characterRosterLobby"></div>
             <div class="builderStep active"><b>01</b><span>Концепция</span></div><div class="builderLine"></div><div class="builderStep"><b>02</b><span>Баланс</span></div><div class="builderLine"></div><div class="builderStep"><b>03</b><span>Готово</span></div>
             <label>Способности и стиль игры<textarea id="charWish" placeholder="Например: маг пространства. Хочу резать дистанцию, телепортироваться и создавать короткие разломы..."></textarea></label>
             <label>Внешность<textarea id="charAppearance" placeholder="Возраст, лицо, волосы, одежда, оружие, заметные детали..."></textarea></label>
             <div class="charButtons"><button id="genChar" class="softBtn">✦ Сгенерировать и сбалансировать</button><button id="saveChar" class="goldBtn" disabled>Выбрать героя</button></div>
-            <div id="charCard"></div>
+            <div id="charCard"></div><div class="loadoutBuilder"><div class="paneHead"><div><p class="eyebrow">EXPEDITION LOADOUT</p><h3>Что герой берёт с собой</h3></div><span id="loadoutUsage">0 / 6</span></div><div class="riskSplit"><div class="safeStash"><b>▣ Склад аккаунта — безопасен</b><span>Не теряется при смерти персонажа.</span></div><div class="riskPack"><b>△ Рюкзак экспедиции — под риском</b><span>При смерти его содержимое падает в текущую сцену.</span></div></div><div id="loadoutGrid" class="loadoutGrid"></div><button id="saveLoadout" class="softBtn wide">Сохранить рюкзак</button></div>
           </div>
         </div>
       </div>
     </section>
+
     <section id="game" class="screen gameScreen">
-      <div class="gameTop"><div><p class="eyebrow" id="gameScenarioLabel">KISAI WORLD</p><h2 id="sceneTitle">Текущая сцена</h2></div><div class="turnChip" id="turnLabel">ОЖИДАНИЕ...</div></div>
+      <div class="gameTop"><div><p class="eyebrow" id="gameScenarioLabel">KISAI WORLD</p><h2 id="sceneTitle">Текущая сцена</h2></div><div class="gameRunMeta"><div class="progressMeter"><span>ПРОГРЕСС</span><div><i id="runProgressFill"></i></div><b id="runProgressText">0%</b></div><div id="diceResult" class="diceResult">d20 —</div><button id="extractRun" class="goldBtn mini" disabled>Эвакуация</button></div></div>
       <div class="gameLayout">
-        <aside class="partyRail glass"><h3>Партия</h3><div id="party"></div><div class="separator"></div><div id="myStats"></div></aside>
+        <aside class="partyRail glass"><h3>Партия</h3><div id="party"></div><div class="separator"></div><div id="myStats"></div><div class="separator"></div><p class="railLabel">Рюкзак похода</p><div id="runInventory" class="runInventory"></div></aside>
         <div class="sceneStage">
           <div id="sceneArt" class="sceneArt"><div class="sceneParallax"></div><div class="vignette"></div><div class="sceneGrain"></div><div class="sceneBadge">CANONICAL SCENE</div></div>
-          <div class="narration glass"><div class="gmAvatar">GM</div><div><p class="eyebrow">GAME MASTER</p><p id="gmText"></p></div></div>
+          <div class="narration glass"><div class="gmAvatar">GM</div><div class="gmNarrationCopy"><p class="eyebrow">GAME MASTER</p><p id="gmText"></p><div id="voiceEventStack" class="voiceEventStack"></div></div></div>
           <div class="voiceDock glass">
-            <button id="ptt" class="micButton"><span class="micIcon">🎙</span><span class="micLabel"><b>Удерживай для хода</b><small>Говори естественно — друзья слышат тебя</small></span><span class="wave"><i></i><i></i><i></i><i></i><i></i></span></button>
+            <button id="ptt" class="micButton"><span class="micIcon">🎙</span><span class="micLabel"><b>Удерживай для хода</b><small>Говори естественно — речь станет действием</small></span><span class="wave"><i></i><i></i><i></i><i></i><i></i></span></button>
             <div class="textAction"><input id="textTurn" placeholder="Или введи действие текстом..."><button id="sendText">➤</button></div>
             <div id="voiceStatus" class="voiceStatus"><span></span>Ожидание хода</div>
           </div>
         </div>
-        <aside class="sceneRail glass"><h3>Сцена</h3><div class="sceneThumb active"><img src="assets/game_harbor.jpg" alt=""><span>Текущий кадр</span></div><div class="sceneThumb mutedThumb"><img src="assets/gm_tavern.jpg" alt=""><span>Последний момент</span></div><div class="separator"></div><div id="sceneLoot" class="sceneLoot"></div><p class="railLabel">Журнал</p><div id="log" class="log"></div></aside>
+        <aside class="sceneRail glass"><h3>Сцена</h3><div id="sceneContext" class="sceneContext"></div><div id="sceneThreats" class="sceneThreats"></div><div class="sceneThumb active"><img src="assets/game_harbor.jpg" alt=""><span>Текущий кадр</span></div><div class="sceneThumb mutedThumb"><img src="assets/gm_tavern.jpg" alt=""><span>Последний момент</span></div><div class="separator"></div><div id="sceneLoot" class="sceneLoot"></div><p class="railLabel">Журнал</p><div id="log" class="log"></div></aside>
       </div>
     </section>
+
     <section id="economy" class="screen economyScreen">
       <div class="economyBackdrop"></div><div class="economyShade"></div>
       <div class="economyShell">
@@ -105,29 +131,26 @@
         <div class="economyLayout">
           <aside class="econSidebar glass">
             <button class="econTab active" data-tab="hero"><span>♙</span><div><b>Герой</b><small>Экипировка и сила</small></div></button>
-            <button class="econTab" data-tab="inventory"><span>▦</span><div><b>Инвентарь</b><small>Все найденные предметы</small></div></button>
-            <button class="econTab" data-tab="market"><span>◇</span><div><b>Рынок</b><small>Покупка и перепродажа</small></div></button>
+            <button class="econTab" data-tab="inventory"><span>▦</span><div><b>Склад</b><small>Безлимитное хранилище аккаунта</small></div></button><button class="econTab" data-tab="craft"><span>⚒</span><div><b>Крафт</b><small>Только расходники</small></div></button><button class="econTab" data-tab="market"><span>◇</span><div><b>Рынок</b><small>Покупка и перепродажа</small></div></button>
             <button class="econTab" data-tab="wallet"><span>◉</span><div><b>Кошелёк</b><small>Фарм и транзакции</small></div></button>
             <div class="ledgerBadge"><i></i><div><b>KisAI Dev Ledger</b><small>Demo · off-chain · без вывода</small></div></div>
           </aside>
           <div class="econContent glass">
             <div id="econHero" class="econPane active">
-              <div class="paneHead"><div><p class="eyebrow">LOADOUT</p><h3>Экипировка героя</h3></div><span class="powerBadge" id="gearPower">GEAR +0</span></div>
-              <div id="heroLoadout" class="loadoutGrid"></div>
-              <div class="economyInfoCard"><b>Как работает сила шмота</b><p>Редкость увеличивает бюджет аффиксов, но предметы масштабируются вокруг уровня героя. Важно: при смерти весь переносимый инвентарь выпадает в текущей сцене. Союзники должны подобрать вещи до ухода, иначе они исчезнут навсегда.</p></div>
+              <div class="paneHead"><div><p class="eyebrow">CHARACTER SLOTS</p><h3>Персонажи аккаунта</h3></div><span class="powerBadge" id="slotUsage">0 / 3</span></div><div id="characterRoster" class="characterRoster"></div><div class="economyInfoCard"><b>Permadeath</b><p>Живой герой занимает слот. После смерти он остаётся в истории аккаунта, но больше не может участвовать в приключениях; слот освобождается для нового персонажа.</p></div>
             </div>
             <div id="econInventory" class="econPane">
-              <div class="paneHead"><div><p class="eyebrow">COLLECTION</p><h3>Инвентарь</h3></div><div class="inventoryFilters"><button class="filterChip active" data-rarity="all">Все</button><button class="filterChip" data-rarity="rare">Rare+</button><button class="filterChip" data-rarity="equipped">Надето</button></div></div>
+              <div class="paneHead"><div><p class="eyebrow">ACCOUNT STASH</p><h3>Безлимитный склад</h3></div><div class="inventoryFilters"><button class="filterChip active" data-rarity="all">Все</button><button class="filterChip" data-rarity="rare">Rare+</button><button class="filterChip" data-rarity="equipped">Надето</button></div></div>
               <div id="inventoryGrid" class="inventoryGrid"></div>
             </div>
-            <div id="econMarket" class="econPane">
+            <div id="econCraft" class="econPane"><div class="paneHead"><div><p class="eyebrow">CONSUMABLE CRAFT</p><h3>Мастерская расходников</h3></div><span class="powerBadge">ВНЕ ПОХОДА</span></div><p class="muted">Оружие здесь не создаётся и не зачаровывается. Зачарование возможно только внутри событий с кузницей или алтарём.</p><div id="craftGrid" class="craftGrid"></div></div><div id="econMarket" class="econPane">
               <div class="paneHead"><div><p class="eyebrow">SECONDARY MARKET</p><h3>Рынок игроков</h3></div><div class="marketTools"><input id="marketSearch" placeholder="Поиск предмета..."><button id="refreshMarket" class="softBtn">↻ Обновить</button></div></div>
               <div class="marketTicker"><span>Комиссия сделки <b>2.5%</b></span><span>Все предметы <b>tradable</b></span><span>Цена задаётся владельцем</span></div>
               <div id="marketGrid" class="marketGrid"></div>
             </div>
             <div id="econWallet" class="econPane">
               <div class="paneHead"><div><p class="eyebrow">WALLET</p><h3>KAI кошелёк</h3></div><div class="farmMeter"><span>ДНЕВНОЙ ФАРМ</span><div><i id="farmFill"></i></div><b id="farmText">0 / 60</b></div></div>
-              <div class="walletStats"><div><small>Доступно</small><strong id="walletBigBalance">0 KAI</strong></div><div><small>Сеть</small><strong>KisAI Dev Ledger</strong></div><div><small>Источник</small><strong>Приключения + торговля</strong></div></div>
+              <div class="walletStats"><div><small>Доступно</small><strong id="walletBigBalance">0 KAI</strong></div><div><small>Билеты событий</small><strong id="eventTickets">0</strong></div><div><small>Подписка</small><strong id="subscriptionStatus">Нет</strong></div></div>
               <p class="walletNote">В этой демо-сборке KAI — внутренняя тестовая крипто-экономика без денежной стоимости и вывода: токены фармятся в приключениях с дневным лимитом, тратятся на вторичном рынке и переходят продавцу за вычетом комиссии. Ledger отделён от игрового runtime, чтобы позже заменить его на выбранную блокчейн-сеть и внешний кошелёк.</p>
               <div class="transactions"><div class="transactionsHead"><b>Последние операции</b><small>локальный профиль</small></div><div id="txList"></div></div>
             </div>
@@ -136,11 +159,15 @@
       </div>
       <div id="itemInspector" class="itemInspector hidden"><div class="inspectorPanel"><button id="closeInspector" class="x iconBtn">×</button><div id="inspectorBody"></div></div></div>
     </section>
+
     <section id="settings" class="modal hidden"><div class="panel settings"><button id="closeSettings" class="x iconBtn">×</button><p class="eyebrow">RUNTIME</p><h2>AI Providers</h2><p class="muted">Ключи сохраняются только в локальном <code>data/config.json</code> хоста.</p><div class="settingsGrid"><label>LLM Base URL<input id="llmUrl"></label><label>LLM model<input id="llmModel"></label><label>LLM API key<input id="llmKey" type="password"></label><label>STT model<input id="sttModel"></label><label>STT API key<input id="sttKey" type="password"></label><label>TTS provider<select id="ttsProvider"><option value="openai">OpenAI</option><option value="elevenlabs">ElevenLabs</option></select></label><label>TTS model<input id="ttsModel"></label><label>TTS voice / voice_id<input id="ttsVoice"></label><label>TTS API key<input id="ttsKey" type="password"></label><label>Громкость музыки<input id="musicVolume" type="range" min="0" max="100" value="32"></label><label class="check"><input id="imgEnabled" type="checkbox"> Генерировать ключевые кадры</label><label>Image model<input id="imgModel"></label><label>Image API key<input id="imgKey" type="password"></label></div><button id="saveSettings" class="goldBtn wide">Сохранить настройки</button></div></section>
-    <section id="tour" class="modal hidden"><div class="panel tourPanel"><button id="closeTour" class="x iconBtn">×</button><p class="eyebrow">ИГРОВОЙ ЦИКЛ</p><h2>Говоришь ты — мир отвечает</h2><div class="tourFlow"><div><b>1</b><span>Игрок говорит</span><small>Реальный голос идёт партии</small></div><i>→</i><div><b>2</b><span>STT понимает ход</span><small>Речь становится действием</small></div><i>→</i><div><b>3</b><span>AI GM решает</span><small>С учётом мира и уровня</small></div><i>→</i><div><b>4</b><span>Мир меняется</span><small>Голос GM + новый кадр</small></div></div></div></section>
+
+    <section id="tour" class="modal hidden"><div class="panel tourPanel"><button id="closeTour" class="x iconBtn">×</button><p class="eyebrow">ИГРОВОЙ ЦИКЛ</p><h2>Говоришь ты — мир отвечает</h2><div class="tourFlow"><div><b>1</b><span>Игрок говорит</span><small>Реальный голос идёт партии</small></div><i>→</i><div><b>2</b><span>STT понимает ход</span><small>Речь становится действием</small></div><i>→</i><div><b>3</b><span>AI GM предлагает исход</span><small>DC и d20 всегда решает сервер</small></div><i>→</i><div><b>4</b><span>Мир меняется</span><small>Голос GM + новый кадр</small></div></div></div></section>
+
+    <section id="install" class="modal hidden"><div class="panel installPanel"><button id="closeInstall" class="x iconBtn">×</button><p class="eyebrow">БЫСТРЫЙ ЗАПУСК</p><h2>Установка KisAI Worlds</h2><div class="installCols"><div class="installCol" data-platform="windows"><h3>Windows</h3><ol><li>Установи Node.js 20+.</li><li>Запусти <code>INSTALL_WINDOWS.ps1</code>.</li><li>Установщик создаст локальный config и ярлык на рабочем столе.</li><li>Для LAN используй <code>START_LAN_WINDOWS.bat</code>.</li></ol><div class="codeBlock">powershell -ExecutionPolicy Bypass -File .\INSTALL_WINDOWS.ps1</div></div><div class="installCol" data-platform="linux"><h3>Linux</h3><ol><li>Установи Node.js 20+.</li><li>Запусти <code>./INSTALL_LINUX.sh</code>.</li><li>Установщик добавит launcher в <code>~/.local/bin</code> без root.</li><li>Для LAN используй <code>./START_LAN_LINUX.sh</code>.</li></ol><div class="codeBlock">chmod +x INSTALL_LINUX.sh && ./INSTALL_LINUX.sh</div></div></div><p class="muted">API-ключи хранятся только в локальном <code>data/config.json</code> и не должны попадать в Git.</p></div></section>
   </main>
-  <div id="transition" class="transition"><span class="sigil big">K</span><p>Загружаем мир…</p></div>
-  <div id="toast" class="toast"></div>
+  <div id="transition" class="transition"><div class="transitionArt"></div><div class="transitionShade"></div><div class="transitionCore"><span class="sigil big">K</span><small>ENTERING KISAI WORLD</small><p>Загружаем мир…</p><i></i></div></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </div>
 <script src="app.js"></script>
 </body>

@@ -1,0 +1,141 @@
+import assert from 'node:assert/strict';
+import {resolveAttack,effectiveArmor,targetedEvasion,conditionLabel,weaponConditionModifiers} from '../core/combat.mjs';
+import {balanceAbilityFantasy,materializeCharacterCore,recordSkillUse,maxDynamicSkillRank,evolveAbilityDefinition,maxAbilitySlots,spendAbilityResource,refillCharacterResources,upgradeResourcePool} from '../core/character.mjs';
+import {spawn} from 'node:child_process';
+import {GM_VOICE_PROFILES,PLAYER_VOICE_PROFILES,NPC_VOICE_ARCHETYPES,assignNpcVoiceProfile,profileForSpeaker,makeVoiceEvent} from '../core/voice.mjs';
+
+{
+  const armor={id:'cuirass',type:'armor',baseArmor:4,durability:100,material:['steel'],damage:[]};
+  const defender={level:1,attributes:{agility:0,endurance:1},combat:{hp_current:18,hp_max:18,evasion:10},equipment:{chest:armor},injuries:[]};
+  const attacker=materializeCharacterCore({level:1,archetype:'Арканист',concept:'пространственный Разрез',abilities:['Разрез пространства']});
+  const result=resolveAttack({attacker,defender,ability:{...attacker.abilities[0],damage:'1d8'},attackDie:20,damageRng:()=>8,targetArea:'torso'});
+  assert.equal(result.hit,true);
+  assert.equal(result.damage.raw,8);
+  assert.equal(result.armor.before,4);
+  assert.equal(result.damage.hp,4);
+  assert.equal(defender.combat.hp_current,14);
+  assert.ok(armor.durability<100,'armor must wear when absorbing damage');
+}
+
+{
+  const armor={id:'cuirass',type:'armor',baseArmor:4,durability:100,material:['steel'],damage:[]};
+  const defender={combat:{hp_current:18,hp_max:18,evasion:10},equipment:{chest:armor},injuries:[]};
+  const attacker=materializeCharacterCore({level:1,concept:'короткий клинок',abilities:['Удар клинком']});
+  const result=resolveAttack({attacker,defender,ability:{...attacker.abilities[0],damage:'1d3',damageType:'slashing'},attackDie:20,damageRng:()=>3});
+  assert.equal(result.damage.hp,0,'armor 4 must fully stop raw damage 3');
+  assert.ok(armor.durability<100,'blocked hit must still wear armor');
+}
+
+{
+  const armor={baseArmor:4,durability:100,material:['steel'],damage:[{area:'breach',kind:'cut',severity:'deep'}]};
+  assert.equal(effectiveArmor(armor,'breach'),2,'deep damaged area must reduce local armor');
+  assert.equal(targetedEvasion(10,'breach',true),14,'aiming at a breach must be harder');
+}
+
+{
+  assert.equal(conditionLabel(100),'intact');
+  assert.equal(conditionLabel(55),'damaged');
+  assert.equal(conditionLabel(10),'critical');
+  assert.equal(conditionLabel(0),'destroyed');
+  const freshWeapon={id:'sword',type:'weapon',baseDamage:'1d8',damageBonus:3,durability:100,material:['steel'],defects:[]};
+  const wornWeapon={...freshWeapon,durability:45,defects:['dulled_edge']};
+  assert.equal(weaponConditionModifiers(freshWeapon).damageBonus,3);
+  assert.equal(weaponConditionModifiers(wornWeapon).damageBonus,2,'damaged weapon must lose mechanical damage bonus');
+  const brokenWeapon={...freshWeapon,durability:0,defects:['broken']};
+  assert.equal(weaponConditionModifiers(brokenWeapon).accuracy,-4,'destroyed weapon must be mechanically unreliable');
+  const target={combat:{hp_current:20,hp_max:20,evasion:5},equipment:{chest:null},injuries:[]};
+  const weaponUser=materializeCharacterCore({level:1,attributes:{strength:2,agility:2,endurance:1,perception:1,intelligence:0,charisma:0},abilities:['Удар мечом']});
+  const freshHit=resolveAttack({attacker:weaponUser,defender:structuredClone(target),ability:{...weaponUser.abilities[0],damageType:'slashing'},weapon:freshWeapon,attackDie:10,damageRng:()=>4});
+  const wornHit=resolveAttack({attacker:weaponUser,defender:structuredClone(target),ability:{...weaponUser.abilities[0],damageType:'slashing'},weapon:wornWeapon,attackDie:10,damageRng:()=>4});
+  assert.ok(freshHit.damage.raw>wornHit.damage.raw,'weapon degradation must reduce resolved damage');
+  const absurd=balanceAbilityFantasy('Уничтожение реальности 12d20 гарантированно',1);
+  assert.equal(absurd.damage,'1d8','fantasy wording must not bypass level-1 budget');
+  const aoe=balanceAbilityFantasy('Облако разрезов вокруг меня',1);
+  assert.equal(aoe.damage,'1d6');
+  assert.ok(aoe.targets>1);
+  const learner=materializeCharacterCore({level:1,concept:'обычный путешественник',abilities:['Удар']});
+  const before=learner.dynamicSkills.length;
+  for(let n=0;n<4;n++)recordSkillUse(learner,{name:'Медицина',attribute:'intelligence',success:false});
+  const learned=learner.dynamicSkills.find(x=>x.name==='Медицина');
+  assert.equal(learner.dynamicSkills.length,before+1,'repeated relevant actions should create a dynamic skill');
+  assert.equal(learned.rank,1);
+  assert.equal(maxDynamicSkillRank(1),2);
+  const evolving=materializeCharacterCore({level:4,concept:'пространственный мечник',abilities:['Разрез пространства'],developmentPoints:1});
+  const originalId=evolving.abilities[0].id;
+  const evolved=evolveAbilityDefinition(evolving,{abilityId:originalId,idea:'мощный Разрез пространства',mode:'modify'});
+  assert.equal(evolved.id,originalId,'evolution must preserve ability identity');
+  assert.equal(evolved.damage,'1d10');
+  assert.ok(evolved.cooldown>=1,'higher direct damage needs an economy constraint');
+  assert.equal(maxAbilitySlots(4),2);
+  const cursed=materializeCharacterCore({level:1,concept:'мечник с проклятой энергией',abilities:['Проклятый пространственный Разрез']});
+  const slash=cursed.abilities[0],pool=cursed.combat.resources[slash.resource.pool];
+  assert.ok(slash.resource?.cost===1,'supernatural slash must consume a finite charge resource');
+  assert.equal(pool.max,6);
+  const spent=spendAbilityResource(cursed,slash);assert.equal(spent.current,5);
+  pool.current=0;assert.throws(()=>spendAbilityResource(cursed,slash),/insufficient_resource/);
+  const upgraded=upgradeResourcePool(cursed,pool.id);assert.equal(upgraded.max,8,'resource capacity upgrade must add two charges');
+  upgraded.current=1;refillCharacterResources(cursed);assert.equal(cursed.combat.resources[pool.id].current,8,'expedition refill must restore finite charges');
+}
+
+{
+  assert.ok(GM_VOICE_PROFILES.length>=4&&GM_VOICE_PROFILES.length<=6,'GM catalog must remain a small selectable set');
+  assert.ok(PLAYER_VOICE_PROFILES.length>=10&&PLAYER_VOICE_PROFILES.length<=15,'player voice catalog should expose roughly 10-15 bases');
+  assert.ok(NPC_VOICE_ARCHETYPES.length>=12,'NPCs need a reusable archetype library');
+  const npc={id:'bandit_02',name:'Бандит'};const id1=assignNpcVoiceProfile(npc,{seed:'bandit_02'}),id2=assignNpcVoiceProfile(npc,{seed:'bandit_02'});
+  assert.equal(id1,id2,'NPC voice identity must be stable');
+  assert.notEqual(profileForSpeaker({speakerType:'GM',room:{voice:{gmVoiceId:'gm_calm_male'}}}).kind,profileForSpeaker({speakerType:'NPC',speaker:npc}).kind,'GM and NPC routing must remain separate');
+  assert.equal(makeVoiceEvent({speakerType:'SYSTEM',type:'mechanics',mechanics:{damage:5}}).text,'','SYSTEM mechanics must not require spoken text');
+}
+
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const child=spawn(process.execPath,['server.mjs'],{stdio:['ignore','pipe','pipe'],env:{...process.env,KISAI_TEST_DICE:'20,20'}});
+let stderr='';child.stderr.on('data',d=>stderr+=d);
+let sessionToken=null;
+const raw=async(path,options={})=>{
+  if(path==='/api/rooms'&&!sessionToken){const session=await fetch('http://127.0.0.1:8787/api/session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Combat CI Hero'})});sessionToken=(await session.json()).token}
+  const r=await fetch('http://127.0.0.1:8787'+path,{...options,headers:{'content-type':'application/json',...(sessionToken?{authorization:'Bearer '+sessionToken}:{})}});let data=null;try{data=await r.json()}catch{}
+  return{ok:r.ok,status:r.status,data};
+};
+const request=async(path,options={})=>{const r=await raw(path,options);if(!r.ok)throw new Error(path+' -> '+r.status+' '+JSON.stringify(r.data));return r.data};
+const post=(path,value)=>request(path,{method:'POST',body:JSON.stringify(value)});
+
+try{
+  let health=null;for(let i=0;i<50&&!health;i++){try{health=await request('/api/health')}catch{await sleep(100)}}if(!health)throw new Error('server did not start: '+stderr);
+  const voices=await request('/api/voice-profiles');assert.ok(voices.gm.length>=4&&voices.player.length>=10&&voices.npcArchetypes.length>=12);
+  const events=await request('/api/events'),event=events.find(x=>x.entry?.type==='free')||events[0];
+  const name='Combat CI Hero';
+  const created=await post('/api/rooms',{name,eventId:event.id});
+  const code=created.room.code;
+  const voiceConfigured=await post('/api/rooms/'+code+'/voice-config',{name,gmVoiceId:'gm_female'});assert.equal(voiceConfigured.voice.gmVoiceId,'gm_female');
+  const made=await post('/api/rooms/'+code+'/character',{name,wish:'пространственный мечник. Главная способность — Разрез пространства',appearance:'тёмный плащ'});
+  assert.equal(made.character.coreVersion,'0.2');
+  assert.ok(made.character.attributes&&made.character.combat);
+  assert.equal(typeof made.character.abilities[0],'object');
+  const poweredAbility=made.character.abilities.find(x=>x.resource?.cost>0);assert.ok(poweredAbility,'spatial combat build must expose a finite resource cost');
+  let started=await post('/api/rooms/'+code+'/start',{});
+  const visited=new Set([started.players[0].position.anchorId]);
+  while(started.scene.geometry.anchors.some(a=>!visited.has(a.id))){
+    const next=started.scene.geometry.anchors.find(a=>!visited.has(a.id));
+    started=(await post('/api/rooms/'+code+'/turn',{name,action:'иду к '+next.id})).room;visited.add(next.id);
+  }
+  if(started.players[0].position.anchorId!==started.objectives[0].anchorId)started=(await post('/api/rooms/'+code+'/turn',{name,action:'иду к '+started.objectives[0].anchorId})).room;
+  const enemy=started.scene.combatants?.[0];assert.ok(enemy&&enemy.combat?.hp_max>0,'canonical scene must expose a hostile combatant');
+  const startedHero=started.players[0].character,startedPool=startedHero.combat.resources[poweredAbility.resource.pool];assert.equal(startedPool.current,startedPool.max,'expedition start must refill charges');
+  const beforeCharge=startedPool.current;
+  const beforeDurability=enemy.equipment.chest.durability;
+  const playerHpBefore=started.players[0].character.combat.hp_current;
+  const attack=await post('/api/rooms/'+code+'/combat/attack',{name,action:'Режу противника Разрезом в повреждённое место брони',targetId:enemy.id,targetArea:'breach',aimed:true});
+  assert.equal(attack.combat.hit,true);
+  assert.equal(attack.combat.attack.die,20);
+  assert.ok(attack.combat.attack.evasion>enemy.combat.evasion,'aimed attack must raise hit threshold');
+  assert.equal(attack.resourceSpend.spent,poweredAbility.resource.cost);
+  assert.equal(attack.room.players[0].character.combat.resources[poweredAbility.resource.pool].current,beforeCharge-poweredAbility.resource.cost,'runtime attack must persist finite charge consumption');
+  assert.ok(attack.room.scene.combatants[0].equipment.chest.durability<beforeDurability,'runtime attack must persist armor wear');
+  assert.ok(attack.counterattack&&attack.counterattack.hit,'living enemy should resolve a deterministic counterattack');
+  const playerAfter=attack.room.players[0];assert.ok(playerAfter.character.combat.hp_current<playerHpBefore,'counterattack must reduce authoritative player HP');
+  assert.ok(attack.room.log?.[0]?.combat&&attack.room.log?.[0]?.counterattack,'room log must contain both sides of the combat exchange');
+  assert.ok(attack.voiceEvents?.some(x=>x.speakerType==='GM'),'combat response must include a GM narration event');
+  assert.ok(attack.voiceEvents?.some(x=>x.speakerType==='SYSTEM'),'mechanics must be a separate non-spoken SYSTEM event');
+  assert.ok(attack.voiceEvents?.some(x=>x.speakerType==='TIMER'),'turn timer must be routed separately through GM voice');
+  console.log('Combat core PASS',{enemy:enemy.name,attack:attack.combat.attack,damage:attack.combat.damage,armor:attack.combat.armor?.before});
+}finally{child.kill('SIGTERM')}

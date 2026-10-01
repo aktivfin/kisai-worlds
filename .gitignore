@@ -1,5 +1,9 @@
 node_modules/
 data/config.json
+data/state.json
+data/state.json.bak
+data/state.json.corrupt.*
+data/.state.json.*.tmp
 data/profiles/
 data/runtime/
 *.log

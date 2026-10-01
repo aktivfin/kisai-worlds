@@ -1,0 +1,175 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { privateAddress, validateProviderUrl } from '../server/provider-security.mjs';
+import { atomicWrite, loadState } from '../server/persistence.mjs';
+import { itemModifier } from '../core/item-modifiers.mjs';
+import { resolveAttack } from '../core/combat.mjs';
+import { balanceAbilityFantasy, materializeCharacterCore, evolveAbilityDefinition } from '../core/character.mjs';
+
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'kisai-stabilization-'));
+const state=path.join(dir,'state.json'),config=path.join(dir,'config.json');
+const port=20000+Math.floor(Math.random()*30000),base=`http://127.0.0.1:${port}`;
+const settings=JSON.parse(fs.readFileSync('data/config.example.json'));settings.port=port;settings.llm.api_key='SECRET_TEST_KEY';
+atomicWrite(config,settings);
+let child,stderr='',diceQueue='1,1,1,1';
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function launch(){
+  child=spawn(process.execPath,['server.mjs'],{env:{...process.env,KISAI_STATE_FILE:state,KISAI_CONFIG_FILE:config,KISAI_PORT:String(port),KISAI_TEST_DICE:diceQueue},stdio:['ignore','ignore','pipe']});
+  child.stderr.on('data',x=>stderr+=x);
+  for(let i=0;i<100;i++){try{const r=await fetch(base+'/api/health');if(r.ok)return}catch{}await sleep(40)}
+  throw new Error('server_start_failed '+stderr);
+}
+async function stop(){if(!child)return;const c=child;child=null;c.kill();await new Promise(resolve=>{if(c.exitCode!==null)return resolve();c.once('exit',resolve);setTimeout(resolve,1500)})}
+async function call(url,token,body,headers={}){
+  const r=await fetch(base+url,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{}),...headers},body:body===undefined?undefined:JSON.stringify(body)});
+  const data=await r.json();return{status:r.status,data};
+}
+async function client(name){const r=await call('/api/session',null,{name});assert.equal(r.status,201);return {token:r.data.token,id:r.data.profile.id}}
+const must=async(url,token,body,headers)=>{const r=await call(url,token,body,headers);assert.ok(r.status>=200&&r.status<300,`${url}: ${r.status} ${JSON.stringify(r.data)}`);return r.data};
+try {
+  assert.equal(privateAddress('127.0.0.1'),true);
+  assert.equal(privateAddress('169.254.169.254'),true);
+  assert.equal(privateAddress('10.0.0.1'),true);
+  assert.equal(privateAddress('8.8.8.8'),false);
+  for(const url of ['file:///etc/passwd','http://127.0.0.1:80','http://169.254.169.254/latest/meta-data','ftp://example.com'])await assert.rejects(validateProviderUrl(url));
+  atomicWrite(state,{v:1});atomicWrite(state,{v:2});fs.writeFileSync(state,'{bad');assert.deepEqual(loadState(state,{}),{v:1});
+  assert.deepEqual(JSON.parse(fs.readFileSync(state)),{v:1});fs.unlinkSync(state);fs.unlinkSync(state+'.bak');
+  const attacker=materializeCharacterCore({concept:'мана маг',abilities:['Мана разрез']});
+  assert.ok(attacker.combat.resources.mana);
+  attacker.developmentPoints=1;evolveAbilityDefinition(attacker,{abilityId:attacker.abilities[0].id,idea:'Кулак',mode:'modify'});
+  assert.equal(attacker.combat.resources.mana,undefined);
+  const weapon={baseDamage:'1d4',durability:100,kind:'equipment',enchantments:[{effects:[{type:'damage_bonus',value:3}]}]};
+  assert.equal(itemModifier(weapon,'damage_bonus'),3);
+  const target=materializeCharacterCore({abilities:['Удар']});
+  const before=resolveAttack({attacker,defender:structuredClone(target),ability:balanceAbilityFantasy('Удар'),attackDie:20,damageRng:()=>1,weapon:{...weapon,enchantments:[]}});
+  const after=resolveAttack({attacker,defender:structuredClone(target),ability:balanceAbilityFantasy('Удар'),attackDie:20,damageRng:()=>1,weapon});
+  assert.equal(after.damage.raw-before.damage.raw,3);
+  await launch();
+  const A=await client('Same Name'),B=await client('Same Name');assert.notEqual(A.id,B.id);
+  assert.equal((await must('/api/profile',A.token)).id,A.id);
+  assert.equal((await must('/api/profile?name=Same%20Name',B.token)).id,B.id);
+  assert.equal((await must('/api/profile',B.token)).balance,0,'fresh display names must not mint KAI');
+  assert.equal((await call('/api/profile/character',null,{name:'Same Name',wish:'hero'})).status,401);
+  const events=await must('/api/events');const free=events.find(x=>x.entry?.type==='free');
+  const room=await must('/api/rooms',A.token,{eventId:free.id}),code=room.room.code;
+  await must('/api/rooms/'+code+'/join',B.token,{});
+  assert.equal((await call('/api/rooms/'+code,A.token)).status,200);
+  assert.equal((await call('/api/rooms/'+code+'/start',B.token,{})).status,403);
+  await must('/api/rooms/'+code+'/character',A.token,{wish:'следопыт'});
+  await must('/api/rooms/'+code+'/character',B.token,{wish:'страж'});
+  const alternate=await must('/api/profile/character',A.token,{wish:'another hero'});
+  const aProfile=await must('/api/profile',A.token),item=aProfile.inventory.find(x=>x.catalogId==='cloth');
+  await must('/api/rooms/'+code+'/loadout',A.token,{items:[{itemId:item.id,quantity:1}]});
+  let started=await must('/api/rooms/'+code+'/start',A.token,{});
+  assert.equal(started.players.find(x=>x.id===A.id).runInventory.length,1);
+  const active=started.turnOrder[started.turnCursor],actor=active===A.id?A:B,other=active===A.id?B:A;
+  assert.equal(started.scene.combatants.length,0,'distant NPC must not leak into private view');
+  assert.equal((await call('/api/rooms/'+code+'/combat/attack',actor.token,{action:'атакую'})).data.error,'target_out_of_range');
+  const expeditionCharacter=started.players.find(x=>x.id===A.id).characterId;
+  await must('/api/profile/select-character',A.token,{characterId:alternate.character.id});
+  assert.equal((await must('/api/rooms/'+code,A.token)).players.find(x=>x.id===A.id).characterId,expeditionCharacter);
+  assert.equal((await call('/api/rooms/'+code+'/turn',other.token,{name:'Same Name',action:'осматриваюсь'})).data.error,'not_your_turn');
+  const streamAbort=new AbortController(),stream=await fetch(base+'/api/rooms/'+code+'/events',{headers:{authorization:'Bearer '+B.token},signal:streamAbort.signal});
+  assert.equal(stream.status,200);const reader=stream.body.getReader();
+  assert.match(new TextDecoder().decode((await reader.read()).value),/ROOM_UPDATED/);
+  const actionPath='/api/rooms/'+code+'/turn';
+  const simultaneous=await Promise.all([call(actionPath,actor.token,{action:'осматриваюсь'},{'x-action-id':'same-action'}),call(actionPath,actor.token,{action:'осматриваюсь'},{'x-action-id':'another-action'})]);
+  assert.deepEqual(simultaneous.map(x=>x.status).sort(),[200,409]);
+  const pushed=await Promise.race([reader.read(),sleep(2500).then(()=>{throw new Error('SSE update missing')})]);
+  assert.match(new TextDecoder().decode(pushed.value),/ROOM_UPDATED/);streamAbort.abort();
+  assert.equal((await call(actionPath,actor.token,{action:'осматриваюсь'},{'x-action-id':'same-action'})).status,409);
+  const beforeRestart=await must('/api/rooms/'+code,A.token);
+  assert.equal(beforeRestart.turnIndex,1);
+  await stop();await launch();
+  const recovered=await must('/api/session',A.token),restored=await must('/api/rooms/'+code,A.token);
+  assert.ok(recovered.room.includes(code));assert.equal(restored.turnIndex,1);
+  assert.equal(restored.players.find(x=>x.id===A.id).runInventory[0].catalogId,'cloth');
+  assert.equal((await call('/api/profile/select-character',A.token,{characterId:'somebody_elses_character'})).status,404);
+  const secret=await must('/api/config');assert.equal(secret.llm.api_key,'••••••');
+  await must('/api/config',null,{llm:{model:'new-model',api_key:''}});
+  assert.equal(JSON.parse(fs.readFileSync(config)).llm.api_key,'SECRET_TEST_KEY');
+  assert.equal((await call('/api/config',null,{llm:{base_url:'http://127.0.0.1:9090'}})).status,422);
+  assert.equal((await call('/api/items/'+item.id+'/visual',B.token,{})).status,404);
+  await stop();const expiredFixture=loadState(state,{});
+  expiredFixture.rooms[code].timer.deadlineAt=Date.now()-1;atomicWrite(state,expiredFixture);await launch();
+  let timed=await must('/api/rooms/'+code,A.token);
+  for(let n=0;n<20&&timed.turnIndex===1;n++){await sleep(80);timed=await must('/api/rooms/'+code,A.token)}
+  assert.equal(timed.turnIndex,2);assert.equal(timed.log[0].event,'TIMER_EXPIRED');
+  for(let n=0;n<19;n++){
+    const view=await must('/api/rooms/'+code,A.token);
+    const turn=view.turnOrder[view.turnCursor],player=turn===A.id?A:B;
+    await must('/api/rooms/'+code+'/turn',player.token,{action:'осматриваюсь'});
+  }
+  const spam=await must('/api/rooms/'+code,A.token);
+  assert.equal(spam.progress,100);
+  assert.equal((await call('/api/rooms/'+code+'/extract',A.token,{})).data.error,'objectives_incomplete');
+
+  const C=await client('Market seller'),D=await client('Buyer one'),E=await client('Buyer two');
+  await stop();
+  const fixture=loadState(state,{}),seller=Object.values(fixture.profiles).find(x=>x.id===C.id);
+  for(const buyerId of [D.id,E.id])Object.values(fixture.profiles).find(x=>x.id===buyerId).balance=1;
+  seller.inventory.push({id:'equipment_fixture',serial:'KW-TEST-IMMUTABLE',kind:'equipment',slot:'weapon',rarity:'epic',name:'Fixture Blade',baseDamage:'1d4',durability:100,status:'owned',ownerId:C.id,provenance:[{type:'test_fixture'}]});
+  atomicWrite(state,fixture);await launch();
+  const listing=await must('/api/market/list',C.token,{itemId:'equipment_fixture',price:1});
+  const buys=await Promise.all([call('/api/market/buy',D.token,{listingId:listing.id}),call('/api/market/buy',E.token,{listingId:listing.id})]);
+  assert.deepEqual(buys.map(x=>x.status).sort(),[200,404]);
+  const winner=buys[0].status===200?D:E,loser=winner===D?E:D;
+  assert.equal((await must('/api/profile',winner.token)).inventory.filter(x=>x.id==='equipment_fixture').length,1);
+  assert.equal((await must('/api/profile',loser.token)).inventory.filter(x=>x.id==='equipment_fixture').length,0);
+  assert.equal((await must('/api/profile',C.token)).balance,1); // 1 KAI incurs 0 KAI fee.
+
+  const victim=await client('Victim'),rescue=await client('Rescuer');
+  const deathRoom=await must('/api/rooms',victim.token,{eventId:free.id}),deathCode=deathRoom.room.code;
+  await must('/api/rooms/'+deathCode+'/join',rescue.token,{});
+  await must('/api/rooms/'+deathCode+'/character',victim.token,{wish:'scout'});
+  await must('/api/rooms/'+deathCode+'/character',rescue.token,{wish:'guard'});
+  const victimProfile=await must('/api/profile',victim.token),carried=victimProfile.inventory.find(x=>x.catalogId==='cloth');
+  await must('/api/rooms/'+deathCode+'/loadout',victim.token,{items:[{itemId:carried.id,quantity:1}]});
+  await must('/api/rooms/'+deathCode+'/start',victim.token,{});
+  let dead=false;
+  for(let n=0;n<12&&!dead;n++){
+    const view=await must('/api/rooms/'+deathCode,victim.token),current=view.turnOrder[view.turnCursor];
+    const action=current===victim.id?'прыгаю в бездну и сознательно иду на смертельный риск '+n:'осматриваюсь';
+    const result=await must('/api/rooms/'+deathCode+'/turn',current===victim.id?victim.token:rescue.token,{action});
+    dead=result.room.players.find(x=>x.id===victim.id).alive===false;
+  }
+  assert.ok(dead,'deterministic lethal check should kill the victim');
+  const deathView=await must('/api/rooms/'+deathCode,rescue.token),dropped=deathView.scene.loot.find(x=>x.catalogId==='cloth');
+  assert.ok(dropped,'death drop must be in scene');
+  await stop();await launch();
+  const recoveredDeath=await must('/api/rooms/'+deathCode,rescue.token);
+  assert.equal(recoveredDeath.players.find(x=>x.id===victim.id).alive,false);
+  assert.ok(recoveredDeath.scene.loot.some(x=>x.id===dropped.id));
+  assert.equal((await must('/api/profile',victim.token)).characters.find(x=>x.id===victimProfile.character.id)?.status,'dead');
+  const controlRoom=await must('/api/rooms',C.token,{eventId:free.id}),controlCode=controlRoom.room.code;
+  const controlChar=await must('/api/rooms/'+controlCode+'/character',C.token,{wish:'fighter'});
+  await stop();
+  const controlFixture=loadState(state,{}),controlProfile=Object.values(controlFixture.profiles).find(x=>x.id===C.id);
+  controlProfile.characters.find(x=>x.id===controlChar.character.id).abilities=[balanceAbilityFantasy('Оглушающая мощная волна'),balanceAbilityFantasy('Замедляющий удар')];
+  const duplicateEnemy=structuredClone(controlFixture.rooms[controlCode].scene.combatants[0]);duplicateEnemy.id='enemy_extra';
+  controlFixture.rooms[controlCode].scene.combatants.push(duplicateEnemy);
+  atomicWrite(state,controlFixture);diceQueue='20,20,20';await launch();
+  let controlState=await must('/api/rooms/'+controlCode+'/start',C.token,{});
+  const desired=controlState.objectives[0].anchorId;
+  const visited=new Set([controlState.players[0].position.anchorId]);
+  for(let n=0;n<8&&controlState.players[0].position.anchorId!==desired;n++){
+    const target=controlState.scene.geometry.anchors.filter(x=>!visited.has(x.id)).at(-1)?.id||desired;
+    controlState=(await must('/api/rooms/'+controlCode+'/turn',C.token,{action:'иду к '+target})).room;
+    visited.add(target);
+  }
+  assert.equal(controlState.players[0].position.anchorId,desired);
+  const ability=controlState.players[0].character.abilities[0];
+  const controlHit=await must('/api/rooms/'+controlCode+'/combat/attack',C.token,{action:ability.name,abilityId:ability.id});
+  assert.equal(controlHit.combat.hit,true);assert.equal(controlHit.counterattack,null,'stun skips enemy counterattack');
+  assert.equal(controlHit.combat.additionalTargets.length,1,'area ability must affect second hostile');
+  assert.equal((await call('/api/rooms/'+controlCode+'/combat/attack',C.token,{action:ability.name,abilityId:ability.id})).data.error,'ability_on_cooldown');
+  const slowAbility=controlState.players[0].character.abilities[1];
+  const slowed=await must('/api/rooms/'+controlCode+'/combat/attack',C.token,{action:slowAbility.name,abilityId:slowAbility.id});
+  assert.equal(slowed.counterattack?.attack.accuracy,slowed.room.scene.combatants[0].attributes.agility-2);
+  assert.equal((await call('/api/rooms/'+controlCode+'/combat/attack',C.token,{action:ability.name,abilityId:ability.id})).data.error,'ability_on_cooldown');
+  await must('/api/rooms/'+controlCode+'/turn',C.token,{action:'осматриваюсь'});
+  console.log('Stabilization PASS: identity, host, SSE, turn mutex/timer, range/cooldown/stun, private POV, character lock, restart inventory/death drop, objectives, double buy, config secret, SSRF, modifiers, resource cleanup, atomic recovery');
+} finally {await stop();fs.rmSync(dir,{recursive:true,force:true})}
