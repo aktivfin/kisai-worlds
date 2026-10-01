@@ -66,6 +66,26 @@ Implemented:
 
 Verification now includes `npm run test:combat` before the full extraction smoke.
 
+## Multi-Voice Runtime 0.4
+
+Implemented:
+- five selectable GM voice profiles;
+- twelve base player-character voice profiles;
+- fifteen reusable NPC voice archetypes;
+- unique/key-NPC voice profile layer;
+- stable NPC voice identity stored on the canonical combatant;
+- room-level GM voice selection by the host before run start;
+- character-level voice profile + Raw / Character Style / Manual mode persistence;
+- structured `voiceEvents` with GM / NPC / SYSTEM / TIMER speakers;
+- SYSTEM mechanics are never synthesized;
+- NPC dialogue is displayed separately from GM narration;
+- Voice Router selects TTS voice per event;
+- sequential client playback with soundtrack ducking;
+- turn timer delivered as its own GM/TIMER event;
+- Intent Interpreter prompt explicitly forbids embedding NPC spoken lines in GM narration.
+
+Production follow-up: continuous party voice and simultaneous/spatial overlapping NPC playback are not implemented yet.
+
 ## Current gameplay core
 
 The game is now structured around paid / subscription-backed AI expeditions rather than a generic RPG lobby.
