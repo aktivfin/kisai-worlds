@@ -89,7 +89,7 @@
         <div class="partyColumn">
           <div class="glass panelHead"><span>Игроки</span><small id="playerCount">1 / 5</small></div>
           <div id="players" class="playerCards"></div>
-          <div class="voiceCheck glass"><div class="micPulse">🎙</div><div><b>Голосовая партия</b><p>Push-to-talk отправляет речь в STT → AI GM → TTS. Постоянный party voice transport пока не реализован.</p></div><span class="statusOk">ГОТОВО</span></div>
+          <div class="voiceCheck glass"><div class="micPulse">🎙</div><div class="voiceLobbyCopy"><b>Голосовая архитектура</b><p>GM озвучивает только мир и систему. NPC говорят собственными голосами.</p><label class="gmVoicePicker">Голос GM<select id="gmVoiceSelect"></select></label></div><span class="statusOk">VOICE ROUTER</span></div>
         </div>
         <div class="characterPanel glass">
           <div class="charPanelVisual"><div class="charVisualShade"></div><div class="charVisualText"><p class="eyebrow">ТВОЙ ГЕРОЙ</p><h3>Опиши кого хочешь играть</h3><p>Нейронка сохранит фантазию персонажа, но адаптирует реальную силу под текущий уровень.</p></div></div>
@@ -110,7 +110,7 @@
         <aside class="partyRail glass"><h3>Партия</h3><div id="party"></div><div class="separator"></div><div id="myStats"></div><div class="separator"></div><p class="railLabel">Рюкзак похода</p><div id="runInventory" class="runInventory"></div></aside>
         <div class="sceneStage">
           <div id="sceneArt" class="sceneArt"><div class="sceneParallax"></div><div class="vignette"></div><div class="sceneGrain"></div><div class="sceneBadge">CANONICAL SCENE</div></div>
-          <div class="narration glass"><div class="gmAvatar">GM</div><div><p class="eyebrow">GAME MASTER</p><p id="gmText"></p></div></div>
+          <div class="narration glass"><div class="gmAvatar">GM</div><div class="gmNarrationCopy"><p class="eyebrow">GAME MASTER</p><p id="gmText"></p><div id="voiceEventStack" class="voiceEventStack"></div></div></div>
           <div class="voiceDock glass">
             <button id="ptt" class="micButton"><span class="micIcon">🎙</span><span class="micLabel"><b>Удерживай для хода</b><small>Говори естественно — речь станет действием</small></span><span class="wave"><i></i><i></i><i></i><i></i><i></i></span></button>
             <div class="textAction"><input id="textTurn" placeholder="Или введи действие текстом..."><button id="sendText">➤</button></div>
